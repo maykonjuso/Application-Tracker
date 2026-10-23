@@ -8,7 +8,7 @@ Você se candidata na **sua sessão normal do navegador**, no site da vaga. A ex
 
 ## 2. Fluxo
 
-1. **Página da vaga**: o painel mostra logo, Chance, Atratividade, reputação e se a empresa costuma responder. Vaga desconhecida → "Avaliar e salvar vaga" (uma chamada de IA, cache de 90 dias). Vaga importada sem descrição (lista do LinkedIn, alerta do Gmail) é completada com o texto da página e reavaliada.
+1. **Página da vaga**: o painel mostra logo, Chance, Atratividade, reputação e se a empresa costuma responder. Vaga desconhecida → "Avaliar e salvar vaga" (uma chamada de IA, cache de 90 dias). Vaga de alerta do Gmail sem descrição pode ser completada com o texto da página e reavaliada.
 2. **Formulário**: assim que aparece, o assistente **preenche sozinho** o que sabe com segurança (perfil → banco de respostas → regras), sem sobrescrever o que você digitou. Formulários em etapas: campos novos são preenchidos quando surgem.
 3. **Perguntas abertas**: "Completar com IA" faz **uma** chamada para todas as pendentes e preenche (contorno azul, para revisar).
 4. **Perguntas sensíveis** (salário, visto, dados pessoais protegidos): nunca vão para a IA; ficam para você (contorno laranja).
@@ -45,17 +45,15 @@ Você se candidata na **sua sessão normal do navegador**, no site da vaga. A ex
 - Popup: liga/desliga geral, por site, pausa de 1 hora, preencher sozinho, anexar CV, contadores do dia.
 - Opções (`defaults.js` é a fonte única): API e dashboard, token, preencher sozinho, anexar CV, contornos, sugestão ao clicar, avaliar vagas sozinho, registrar ao enviar, quando mostrar o painel, lado da tela, começar minimizado, sites ignorados.
 - Não cobre o campo em que você está: troca de lado; dá para arrastar pelo título (posição lembrada por site) ou minimizar num botão flutuante.
-- Na busca de vagas do LinkedIn: "Importar para o tracker" envia as vagas visíveis para a aba Vagas.
 
-## 6. Vagas do LinkedIn sem robô
+## 6. Vagas do LinkedIn via alertas do Gmail
 
 - **Alertas de vaga** do LinkedIn que chegam no Gmail viram vagas automaticamente (`modules/inbox/linkedin_alerts.py`), sem IA para classificar.
-- **Importação da lista** pela extensão (`POST /assistant/import-list`).
-- A descrição completa entra quando você abre a vaga (`/assistant/analyze` enriquece vagas "magras").
+- A descoberta não coleta nem automatiza resultados de busca do LinkedIn. Para uma vaga encontrada manualmente, abra a página e use o assistente para avaliá-la (`/assistant/analyze`).
 
 ## 7. API (token próprio da extensão)
 
-`POST /assistant/page` · `POST /assistant/analyze` · `POST /assistant/fields` (devolve `values`, `suggestions`, `sensitive`, `open`) · `POST /assistant/suggest` (só leitura: não mexe no banco de respostas) · `POST /assistant/learn` · `POST /assistant/submitted` (respostas com origem + `render_id` do PDF anexado) · `POST /assistant/import-list` · `GET /assistant/resume` (header `x-render-id`) · `GET /assistant/logo`
+`POST /assistant/page` · `POST /assistant/analyze` · `POST /assistant/fields` (devolve `values`, `suggestions`, `sensitive`, `open`) · `POST /assistant/suggest` (só leitura: não mexe no banco de respostas) · `POST /assistant/learn` · `POST /assistant/submitted` (respostas com origem + `render_id` do PDF anexado) · `GET /assistant/resume` (header `x-render-id`) · `GET /assistant/logo`
 
 Autenticação: `Authorization: Extension <token>`. O cookie do dashboard só vale fora de origens de extensão e com o header CSRF nas escritas.
 

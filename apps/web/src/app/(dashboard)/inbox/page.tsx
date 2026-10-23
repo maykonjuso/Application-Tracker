@@ -4,7 +4,7 @@ import { Inbox as InboxIcon } from "lucide-react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
-import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Select, Tabs, Textarea, Skeleton } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Input, Modal, PageHeader, Select, Skeleton, SkeletonList, Tabs, Textarea } from "@/components/ui";
 import { useGet, useSend } from "@/lib/hooks";
 import { EMAIL_LABEL } from "@/lib/labels";
 import { formatDateTime } from "@/lib/utils";
@@ -105,7 +105,7 @@ function Emails() {
 }
 
 function Drafts() {
-  const { data } = useGet<Draft[]>(["drafts"], "/api/v1/drafts?status=proposed");
+  const { data, isLoading } = useGet<Draft[]>(["drafts"], "/api/v1/drafts?status=proposed");
   const [edit, setEdit] = useState<Draft | null>(null);
   const inv = { invalidate: [["drafts"], ["dashboard"]] };
   const save = useSend<Draft>("PUT", (d) => `/api/v1/drafts/${d.id}`, { success: "Salvo", ...inv });
@@ -115,7 +115,7 @@ function Drafts() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">O sistema nunca envia e-mails nem mensagens por você: aqui ficam rascunhos para revisar.</p>
-      {!data?.length ? (
+      {isLoading ? <SkeletonList count={3} /> : !data?.length ? (
         <EmptyState title="Nenhum rascunho pendente" />
       ) : (
         data.map((d) => (
@@ -152,4 +152,3 @@ function Drafts() {
     </div>
   );
 }
-

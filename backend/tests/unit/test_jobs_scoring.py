@@ -38,6 +38,35 @@ async def test_ashby_parsing() -> None:
     assert jobs[0].salary == {"min": 8000, "max": 11000, "currency": "USD", "period": "month", "estimated": False}
 
 
+async def test_jobicy_go_keyword_uses_supported_golang_tag() -> None:
+    requests: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "jobs": [
+                    {
+                        "id": 123,
+                        "jobTitle": "Go Engineer",
+                        "companyName": "Globex",
+                        "url": "https://jobicy.com/jobs/123-go-engineer",
+                        "jobDescription": "<p>Build Go services.</p>",
+                    }
+                ]
+            },
+        )
+
+    jobs = await job_sources.board_jobicy("go", httpx.MockTransport(respond))
+
+    assert len(requests) == 1
+    assert requests[0].url.path == "/api/jobs"
+    assert dict(requests[0].url.params) == {"count": "50", "tag": "golang"}
+    assert jobs[0].external_id == "123" and jobs[0].source == "jobicy"
+    assert jobs[0].title == "Go Engineer" and "Build Go services." in (jobs[0].description_text or "")
+
+
 def test_parse_ats_url() -> None:
     assert job_sources.parse_ats_url("https://boards.greenhouse.io/globex/jobs/4001") == (
         "greenhouse",
@@ -47,6 +76,9 @@ def test_parse_ats_url() -> None:
     assert job_sources.parse_ats_url("https://jobs.lever.co/initech/abc-123") == ("lever", "initech", "abc-123")
     assert job_sources.parse_ats_url("https://empresa.gupy.io/jobs/123") == ("gupy", "empresa", "123")
     assert job_sources.parse_ats_url("https://www.linkedin.com/jobs/view/1") is None
+    assert job_sources.parse_ats_url("https://evil.example/jobs.lever.co/initech") is None
+    assert job_sources.parse_ats_url("http://jobs.lever.co/initech") is None
+    assert job_sources.parse_ats_url("https://user@jobs.lever.co/initech") is None
 
 
 @pytest.mark.parametrize(
@@ -97,6 +129,12 @@ def test_features_ranges_and_monotonic() -> None:
     f2, _ = F.responsividade(10, 8)
     assert f2.value > f.value and _["confidence"] == "alta"
     assert F.nao_fantasma(3, 90, True, True).value == 0.0
+    transparent = F.nao_fantasma(0, 12, False, None)
+    assert transparent.value == 1.0 and transparent.missing
+    assert "repostagem: 0" in transparent.evidence
+    assert "sinal acima de 60; não atingido" in transparent.evidence
+    assert "informação sobre demissões recentes indisponível" in transparent.evidence
+    assert "não confirma se a vaga é real" in transparent.evidence
     assert F.remuneracao({"max": 24000, "period": "month"}, 20000, True).value == 1.0
     assert F.remuneracao({"max": 15000, "period": "month"}, 20000, True).value == 0.0
 

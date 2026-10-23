@@ -58,8 +58,8 @@ export const TOURS: Record<string, TourStep[]> = {
     },
     {
       target: "tabs",
-      title: "De onde vêm as vagas",
-      body: "Em “Empresas monitoradas” você escolhe quais empresas acompanhar. Em “Buscas salvas” ficam os termos buscados automaticamente às 9h e 15h nos dias úteis.",
+      title: "Buscar vagas e acompanhar empresas",
+      body: "Em “Buscar vagas”, digite palavras-chave, país e modalidade para ver vagas correspondentes e pesquisar novas fontes. “Empresas (ATS)” configura empresas acompanhadas; “Buscas salvas” mostra e organiza suas pesquisas automáticas.",
     },
     {
       target: "import",

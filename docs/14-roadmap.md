@@ -100,6 +100,5 @@ Estimativas para dedicação parcial com assistência de IA.
 
 ## F10 · Sem robô, extensão no centro (concluída)
 - [x] Robô local removido (código, fila, tabelas, configurações, telas) (ADR-020)
-- [x] Vagas do LinkedIn por alertas no Gmail e importação da lista pela extensão
+- [x] Vagas do LinkedIn por alertas no Gmail e análise manual de páginas individuais
 - [x] Extensão: preenchimento automático ao detectar o formulário, etapas seguintes, "Completar com IA", sugestão com "Usar", equivalências de opções, painel novo que não cobre campos
-

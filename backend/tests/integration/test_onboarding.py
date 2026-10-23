@@ -43,6 +43,12 @@ async def test_ai_check_endpoint(client: AsyncClient, ai: FakeAIClient) -> None:
     assert r.status_code == 200 and r.json()["message"] == "Bem-vindo!"
 
 
+async def test_integrations_include_agent_configuration(client: AsyncClient) -> None:
+    response = await client.get("/api/v1/integrations")
+    assert response.status_code == 200
+    assert isinstance(response.json()["agent"]["token_set"], bool)
+
+
 async def test_defaults_come_from_the_candidates_own_resume(session) -> None:
     m = factories.master()
     created = await profile_service.seed_defaults(session, m)

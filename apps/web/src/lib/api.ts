@@ -54,7 +54,27 @@ export async function rawFetch(path: string, init?: RequestInit) {
     let message = `Erro ${res.status}`;
     try {
       const body = await res.json();
-      message = body?.error?.message ?? message;
+      const apiError = body?.error;
+      const validationErrors = apiError?.details?.errors;
+      const reasons = Array.isArray(validationErrors)
+        ? validationErrors
+            .map((item: { loc?: unknown; msg?: unknown }) => {
+              const message = typeof item?.msg === "string" ? item.msg.replace(/^Value error,\s*/i, "") : "";
+              const location = Array.isArray(item?.loc)
+                ? item.loc.filter((part): part is string | number => typeof part === "string" || typeof part === "number").join(".")
+                : "";
+              return message && location ? `${location}: ${message}` : message;
+            })
+            .filter(Boolean)
+        : [];
+      const summary = typeof apiError?.message === "string" ? apiError.message : message;
+      if (reasons.length) {
+        const requestPath = new URL(res.url, "http://localhost").pathname;
+        const requestMethod = (init?.method ?? "GET").toUpperCase();
+        message = `${summary} (${requestMethod} ${requestPath}): ${reasons.join("; ")}`;
+      } else {
+        message = summary;
+      }
     } catch {}
     throw new ApiError(message, res.status);
   }

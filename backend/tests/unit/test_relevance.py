@@ -5,7 +5,8 @@ from __future__ import annotations
 import pytest
 
 from tracker.modules.jobs.normalize import RawJob, normalize_title
-from tracker.modules.jobs.relevance import filter_relevant, location_ok, matches
+from tracker.modules.jobs.relevance import filter_relevant, location_ok, matches, search_variants
+from tracker.modules.jobs.tasks import matches_saved_search_filters
 
 TERMS = [normalize_title(t) for t in ["data engineer", "engenheiro de dados", "backend", "software engineer", "machine learning"]]
 
@@ -74,3 +75,72 @@ def test_title_match_and_exclusions() -> None:
     # sem informar a empresa, o local não é filtrado (ex.: importação manual)
     assert "Data Engineer" in [r.title for r in filter_relevant(raws, TERMS)]
     assert matches("Pessoa Engenheira de Software Sênior", [normalize_title("engenheira de software")])
+
+
+def test_saved_search_can_match_keywords_in_description() -> None:
+    raw = RawJob(
+        source="x",
+        external_id="1",
+        title="Backend Engineer",
+        company_name="X",
+        description_text="Build Go services for US customers.",
+    )
+    go = [normalize_title("Go")]
+    assert not filter_relevant([raw], go)
+    assert filter_relevant([raw], go, search_in_description=True) == [raw]
+
+
+def test_go_keyword_matches_language_alias_and_board_tags_without_substring_noise() -> None:
+    assert matches("Go Engineer", ["go"])
+    assert matches("Golang Backend Developer", ["go"])
+    assert matches("Go Engineer", ["golang"])
+    assert not matches("Google Cloud Engineer", ["go"])
+    assert search_variants("go") == ["go", "Golang"]
+    assert search_variants("Golang") == ["Golang", "Go"]
+    assert search_variants("backend Go") == ["backend Go"]
+
+    tagged = RawJob(
+        source="remoteok",
+        external_id="2",
+        title="Backend Engineer",
+        company_name="X",
+        raw={"tags": ["Golang", "Backend"]},
+    )
+    assert filter_relevant([tagged], ["go"], search_in_description=True) == [tagged]
+
+
+def test_saved_search_filters_country_alias_and_work_model() -> None:
+    raw = RawJob(
+        source="x",
+        external_id="1",
+        title="Backend Engineer",
+        company_name="X",
+        location="Remote - US",
+        work_model="remote",
+    )
+    assert matches_saved_search_filters(raw, {"country": "United States", "work_models": ["remote"]})
+    assert matches_saved_search_filters(raw, {"country": "USA"})
+    assert matches_saved_search_filters(
+        RawJob(source="x", external_id="2", title="Backend", company_name="X", location="Worldwide"),
+        {"country": "United States"},
+    )
+    assert not matches_saved_search_filters(raw, {"country": "Canada"})
+    assert not matches_saved_search_filters(raw, {"work_models": ["onsite"]})
+    assert not matches_saved_search_filters(
+        RawJob(source="x", external_id="3", title="Backend", company_name="X", location="Remote"),
+        {"country": "United States"},
+    )
+    assert not matches_saved_search_filters(
+        RawJob(source="x", external_id="4", title="Backend", company_name="X", location="Brazil"),
+        {"work_models": ["remote"]},
+    )
+    assert matches_saved_search_filters(
+        RawJob(
+            source="x",
+            external_id="5",
+            title="Backend",
+            company_name="X",
+            description_text="Work remotely from any location.",
+        ),
+        {"work_models": ["remote"]},
+    )

@@ -116,7 +116,7 @@ def detect_work_model(text: str) -> str | None:
     t = text.lower()
     if re.search(r"\b(h[ií]brido|hybrid)\b", t):
         return "hybrid"
-    if re.search(r"\b(remot[oae]|remote|home ?office|anywhere)\b", t):
+    if re.search(r"\b(remot[oae]|remotely|home ?office|anywhere)\b", t):
         return "remote"
     if re.search(r"\b(presencial|on[- ]?site|in[- ]office)\b", t):
         return "onsite"

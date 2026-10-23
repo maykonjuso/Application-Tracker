@@ -2987,6 +2987,52 @@
     }
    }
   },
+  "/api/v1/jobs/select": {
+   "post": {
+    "tags": [
+     "jobs"
+    ],
+    "summary": "Select Discovered Jobs",
+    "description": "Move apenas vagas selecionadas em Descobrir para a fila de vagas novas.",
+    "operationId": "select_discovered_jobs_api_v1_jobs_select_post",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "$ref": "#/components/schemas/SelectDiscoveredIn"
+       }
+      }
+     },
+     "required": true
+    },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "additionalProperties": {
+          "type": "integer"
+         },
+         "type": "object",
+         "title": "Response Select Discovered Jobs Api V1 Jobs Select Post"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/api/v1/jobs/{job_id}/feedback": {
    "post": {
     "tags": [
@@ -3430,11 +3476,7 @@
       "content": {
        "application/json": {
         "schema": {
-         "type": "object",
-         "additionalProperties": {
-          "type": "string"
-         },
-         "title": "Response Run Search Api V1 Saved Searches  Search Id  Run Post"
+         "$ref": "#/components/schemas/TaskAccepted"
         }
        }
       }
@@ -7611,7 +7653,7 @@
      "assistant"
     ],
     "summary": "Analyze",
-    "description": "Analisa a vaga da p\u00e1gina (uma chamada de IA, cache de 90 dias) e avalia (Chance \u00d7 Atratividade).\n\nVaga j\u00e1 conhecida mas sem descri\u00e7\u00e3o (ex.: importada da lista de busca do LinkedIn) \u00e9 completada com o\ntexto desta p\u00e1gina e reavaliada.",
+    "description": "Analisa a vaga da p\u00e1gina (uma chamada de IA, cache de 90 dias) e avalia (Chance \u00d7 Atratividade).\n\nVaga j\u00e1 conhecida mas sem descri\u00e7\u00e3o \u00e9 completada com o texto desta p\u00e1gina e reavaliada.",
     "operationId": "analyze_api_v1_assistant_analyze_post",
     "parameters": [
      {
@@ -7650,70 +7692,6 @@
          "type": "object",
          "additionalProperties": true,
          "title": "Response Analyze Api V1 Assistant Analyze Post"
-        }
-       }
-      }
-     },
-     "422": {
-      "description": "Validation Error",
-      "content": {
-       "application/json": {
-        "schema": {
-         "$ref": "#/components/schemas/HTTPValidationError"
-        }
-       }
-      }
-     }
-    }
-   }
-  },
-  "/api/v1/assistant/import-list": {
-   "post": {
-    "tags": [
-     "assistant"
-    ],
-    "summary": "Import List",
-    "description": "Vagas de uma lista de busca que VOC\u00ca abriu (ex.: LinkedIn): entram em Vagas e recebem nota.\n\nSem rob\u00f4: a extens\u00e3o s\u00f3 l\u00ea o que j\u00e1 est\u00e1 na sua tela. A descri\u00e7\u00e3o completa chega quando voc\u00ea abre a vaga.",
-    "operationId": "import_list_api_v1_assistant_import_list_post",
-    "parameters": [
-     {
-      "name": "authorization",
-      "in": "header",
-      "required": false,
-      "schema": {
-       "anyOf": [
-        {
-         "type": "string"
-        },
-        {
-         "type": "null"
-        }
-       ],
-       "title": "Authorization"
-      }
-     }
-    ],
-    "requestBody": {
-     "required": true,
-     "content": {
-      "application/json": {
-       "schema": {
-        "$ref": "#/components/schemas/ImportListIn"
-       }
-      }
-     }
-    },
-    "responses": {
-     "200": {
-      "description": "Successful Response",
-      "content": {
-       "application/json": {
-        "schema": {
-         "type": "object",
-         "additionalProperties": {
-          "type": "integer"
-         },
-         "title": "Response Import List Api V1 Assistant Import List Post"
         }
        }
       }
@@ -11266,29 +11244,6 @@
     "type": "object",
     "title": "HTTPValidationError"
    },
-   "ImportListIn": {
-    "properties": {
-     "source": {
-      "type": "string",
-      "pattern": "^linkedin$",
-      "title": "Source"
-     },
-     "jobs": {
-      "items": {
-       "$ref": "#/components/schemas/ListedJob"
-      },
-      "type": "array",
-      "maxItems": 200,
-      "title": "Jobs"
-     }
-    },
-    "type": "object",
-    "required": [
-     "source",
-     "jobs"
-    ],
-    "title": "ImportListIn"
-   },
    "ImportOut": {
     "properties": {
      "id": {
@@ -11830,6 +11785,9 @@
       "type": "object",
       "title": "Extra"
      },
+     "quality": {
+      "$ref": "#/components/schemas/JobQualityOut"
+     },
      "sources": {
       "items": {
        "$ref": "#/components/schemas/JobSourceOut"
@@ -11871,7 +11829,8 @@
      "description_text",
      "benefits",
      "recruiter",
-     "extra"
+     "extra",
+     "quality"
     ],
     "title": "JobDetail"
    },
@@ -12153,6 +12112,76 @@
     ],
     "title": "JobOut"
    },
+   "JobQualityCheck": {
+    "properties": {
+     "key": {
+      "type": "string",
+      "title": "Key"
+     },
+     "label": {
+      "type": "string",
+      "title": "Label"
+     },
+     "status": {
+      "type": "string",
+      "enum": [
+       "ok",
+       "warning",
+       "risk",
+       "unknown"
+      ],
+      "title": "Status"
+     },
+     "detail": {
+      "type": "string",
+      "title": "Detail"
+     },
+     "scoreable": {
+      "type": "boolean",
+      "title": "Scoreable",
+      "default": true
+     }
+    },
+    "type": "object",
+    "required": [
+     "key",
+     "label",
+     "status",
+     "detail"
+    ],
+    "title": "JobQualityCheck"
+   },
+   "JobQualityOut": {
+    "properties": {
+     "score": {
+      "type": "integer",
+      "title": "Score"
+     },
+     "summary": {
+      "type": "string",
+      "title": "Summary"
+     },
+     "score_explanation": {
+      "type": "string",
+      "title": "Score Explanation"
+     },
+     "checks": {
+      "items": {
+       "$ref": "#/components/schemas/JobQualityCheck"
+      },
+      "type": "array",
+      "title": "Checks"
+     }
+    },
+    "type": "object",
+    "required": [
+     "score",
+     "summary",
+     "score_explanation",
+     "checks"
+    ],
+    "title": "JobQualityOut"
+   },
    "JobSourceOut": {
     "properties": {
      "source": {
@@ -12303,55 +12332,6 @@
     },
     "type": "object",
     "title": "LinkedinIn"
-   },
-   "ListedJob": {
-    "properties": {
-     "external_id": {
-      "type": "string",
-      "maxLength": 64,
-      "title": "External Id"
-     },
-     "title": {
-      "type": "string",
-      "maxLength": 300,
-      "title": "Title"
-     },
-     "company": {
-      "type": "string",
-      "maxLength": 200,
-      "title": "Company",
-      "default": ""
-     },
-     "location": {
-      "anyOf": [
-       {
-        "type": "string",
-        "maxLength": 200
-       },
-       {
-        "type": "null"
-       }
-      ],
-      "title": "Location"
-     },
-     "easy_apply": {
-      "type": "boolean",
-      "title": "Easy Apply",
-      "default": false
-     },
-     "text": {
-      "type": "string",
-      "maxLength": 3000,
-      "title": "Text",
-      "default": ""
-     }
-    },
-    "type": "object",
-    "required": [
-     "external_id",
-     "title"
-    ],
-    "title": "ListedJob"
    },
    "ManualApplicationIn": {
     "properties": {
@@ -14022,6 +14002,25 @@
      "seeded"
     ],
     "title": "SeedResult"
+   },
+   "SelectDiscoveredIn": {
+    "properties": {
+     "job_ids": {
+      "items": {
+       "type": "string",
+       "format": "uuid"
+      },
+      "type": "array",
+      "maxItems": 200,
+      "minItems": 1,
+      "title": "Job Ids"
+     }
+    },
+    "type": "object",
+    "required": [
+     "job_ids"
+    ],
+    "title": "SelectDiscoveredIn"
    },
    "SimulateIn": {
     "properties": {

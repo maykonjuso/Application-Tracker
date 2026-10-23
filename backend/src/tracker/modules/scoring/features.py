@@ -138,22 +138,43 @@ def recrutador_ativo(recruiter: dict[str, Any] | None) -> Feature:
     )
 
 
-def nao_fantasma(repost_count: int, age_days: float | None, is_generic: bool, layoffs: bool | None) -> Feature:
+def nao_fantasma(
+    repost_count: int,
+    age_days: float | None,
+    is_generic: bool | None,
+    layoffs: bool | None,
+    age_basis: str = "data de publicação",
+) -> Feature:
     pen = 0.0
-    ev: list[str] = []
+    evidence: list[str] = []
     if repost_count >= 2:
         pen += 0.3
-        ev.append(f"repostada {repost_count}x")
+        evidence.append(f"repostagem: {repost_count} vezes (sinal: 2 ou mais)")
+    else:
+        evidence.append(f"repostagem: {repost_count} (sinal a partir de 2; não atingido)")
     if age_days is not None and age_days > 60:
         pen += 0.3
-        ev.append(f"aberta há {int(age_days)} dias")
-    if is_generic:
+        evidence.append(f"antiguidade desde {age_basis}: {int(age_days)} dias (sinal: acima de 60)")
+    elif age_days is not None:
+        evidence.append(f"antiguidade desde {age_basis}: {int(age_days)} dias (sinal acima de 60; não atingido)")
+    else:
+        evidence.append("antiguidade: sem data para avaliar")
+    if is_generic is True:
         pen += 0.2
-        ev.append("descrição genérica")
-    if layoffs:
+        evidence.append("descrição marcada como genérica pela extração")
+    elif is_generic is False:
+        evidence.append("descrição não foi marcada como genérica pela extração")
+    else:
+        evidence.append("descrição ainda não analisada quanto a conteúdo genérico")
+    if layoffs is True:
         pen += 0.3
-        ev.append("layoff recente")
-    return Feature(clamp(1 - pen), "; ".join(ev) or "sem sinais de vaga fantasma")
+        evidence.append("há informação de demissões recentes da empresa")
+    elif layoffs is False:
+        evidence.append("perfil consultado não aponta demissões recentes")
+    else:
+        evidence.append("informação sobre demissões recentes indisponível")
+    evidence.append("heurística de triagem; não confirma se a vaga é real ou está ativa")
+    return Feature(clamp(1 - pen), ". ".join(evidence), missing=age_days is None or is_generic is None or layoffs is None)
 
 
 def conexoes(referral_possible: bool, first_degree: int, second_degree: int) -> Feature:

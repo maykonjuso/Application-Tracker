@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 
@@ -212,16 +213,40 @@ FETCHERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby, "gupy": gu
 
 def parse_ats_url(url: str) -> tuple[str, str, str | None] | None:
     """URL de vaga → (ats, board_token, job_id)."""
-    patterns = [
-        ("greenhouse", r"(?:boards|job-boards)\.greenhouse\.io/(?:embed/job_app\?for=)?([\w-]+)(?:/jobs/(\d+))?"),
-        ("lever", r"jobs\.lever\.co/([\w-]+)(?:/([\w-]+))?"),
-        ("ashby", r"jobs\.ashbyhq\.com/([\w%.-]+)(?:/([\w-]+))?"),
-        ("gupy", r"([\w-]+)\.gupy\.io(?:/jobs/(\d+))?"),
-    ]
-    for ats, p in patterns:
-        m = re.search(p, url)
-        if m:
-            return ats, m.group(1), m.group(2)
+    try:
+        parsed = urlsplit(url.strip())
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or parsed.username or parsed.password or parsed.port not in (None, 443):
+            return None
+    except ValueError:
+        return None
+
+    parts = [part for part in parsed.path.split("/") if part]
+    token: str | None = None
+    job_id: str | None = None
+    ats: str | None = None
+    if host in {"boards.greenhouse.io", "job-boards.greenhouse.io"}:
+        ats = "greenhouse"
+        query_token = parse_qs(parsed.query).get("for", [None])[0]
+        if parts[:2] == ["embed", "job_app"]:
+            token = query_token
+        elif parts:
+            token = parts[0]
+            if len(parts) >= 3 and parts[1] == "jobs":
+                job_id = parts[2]
+    elif host == "jobs.lever.co" and parts:
+        ats, token = "lever", parts[0]
+        job_id = parts[1] if len(parts) > 1 else None
+    elif host == "jobs.ashbyhq.com" and parts:
+        ats, token = "ashby", parts[0]
+        job_id = parts[1] if len(parts) > 1 else None
+    elif host.endswith(".gupy.io") and re.fullmatch(r"[a-z0-9-]+\.gupy\.io", host):
+        ats, token = "gupy", host.removesuffix(".gupy.io")
+        if len(parts) >= 2 and parts[0] == "jobs":
+            job_id = parts[1]
+
+    if ats and token and re.fullmatch(r"[\w.-]{1,160}", token):
+        return ats, token, job_id
     return None
 
 
@@ -402,7 +427,9 @@ async def board_himalayas(query: str, transport: httpx.AsyncBaseTransport | None
 
 async def board_jobicy(query: str, transport: httpx.AsyncBaseTransport | None = None) -> list[RawJob]:
     tag = query.split("|")[0].strip()
-    data = await _get_json("https://jobicy.com/api/v2/remote-jobs", {"count": 50, "tag": tag}, transport)
+    if tag.casefold() == "go":
+        tag = "golang"
+    data = await _get_json("https://jobicy.com/api/jobs", {"count": 50, "tag": tag}, transport)
     return [
         RawJob(
             source="jobicy",

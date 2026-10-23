@@ -9,7 +9,8 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import Response
-from sqlalchemy import Text, and_, case, func, select
+from pydantic import BaseModel, Field
+from sqlalchemy import Text, and_, case, exists, func, or_, select
 
 from tracker.api.deps import SessionDep, TaskAccepted, get_or_404
 from tracker.core import audit
@@ -19,11 +20,13 @@ from tracker.modules.applications import service as app_service
 from tracker.modules.applications.models import Application
 from tracker.modules.companies.models import Company
 from tracker.modules.jobs.models import Job, JobFeedback, JobSnapshot, JobSource, SavedSearch
+from tracker.modules.jobs.quality import assess_job_quality
 from tracker.modules.jobs.schemas import (
     FeedbackIn,
     JobDetail,
     JobImportIn,
     JobOut,
+    JobQualityOut,
     JobSourceOut,
     SavedSearchIn,
     SavedSearchOut,
@@ -35,10 +38,25 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 searches_router = APIRouter(prefix="/saved-searches", tags=["jobs"])
 
 
+class SelectDiscoveredIn(BaseModel):
+    job_ids: list[uuid.UUID] = Field(min_length=1, max_length=200)
+
+
 def _job_out(
-    job: Job, company: Company | None, score: JobScore | None, app: Application | None, cls: type[JobOut] = JobOut
+    job: Job,
+    company: Company | None,
+    score: JobScore | None,
+    app: Application | None,
+    cls: type[JobOut] = JobOut,
+    quality: JobQualityOut | None = None,
 ) -> Any:
-    out = cls.model_validate(job)
+    if cls is JobDetail:
+        if quality is None:
+            raise ValueError("JobDetail requires a quality assessment")
+        job_data = {column.key: getattr(job, column.key) for column in Job.__mapper__.column_attrs}
+        out = cls.model_validate({**job_data, "quality": quality})
+    else:
+        out = cls.model_validate(job)
     out.company_name = company.name if company else None
     out.score = ScoreOut.model_validate(score) if score else None
     out.application_id = app.id if app else None
@@ -87,8 +105,23 @@ async def list_jobs(
     if company_id:
         stmt = stmt.where(Job.company_id == company_id)
     if q:
-        like = f"%{q}%"
-        stmt = stmt.where(Job.title.ilike(like) | Company.name.ilike(like) | Job.description_text.ilike(like))
+        terms = [term for term in q.split() if term]
+        stmt = stmt.where(
+            and_(
+                *(
+                    Job.title.ilike(f"%{term}%")
+                    | Company.name.ilike(f"%{term}%")
+                    | Job.description_text.ilike(f"%{term}%")
+                    | exists(
+                        select(JobSource.id).where(
+                            JobSource.job_id == Job.id,
+                            JobSource.raw.cast(Text).ilike(f"%{term}%"),
+                        )
+                    )
+                    for term in terms
+                )
+            )
+        )
     if company:
         stmt = stmt.where(Job.company_id.in_(company))
     for t in tech or []:  # cada tecnologia precisa aparecer nos requisitos ou na descrição
@@ -103,7 +136,20 @@ async def list_jobs(
     if apply_kind:
         stmt = stmt.where(Job.apply_kind.in_(apply_kind))
     if location:
-        stmt = stmt.where(Job.location.ilike(f"%{location}%"))
+        location_terms = [Job.location.ilike(f"%{location}%")]
+        from tracker.modules.jobs import relevance
+
+        aliases = relevance.country_aliases(location)
+        for alias in aliases:
+            if alias == "us":
+                location_terms.append(
+                    Job.location.op("~*")(r"(^|[^a-zA-Z])us([^a-zA-Z]|$)")
+                )
+            else:
+                location_terms.append(Job.location.ilike(f"%{alias}%"))
+        if aliases:
+            location_terms.extend(Job.location.ilike(f"%{term}%") for term in ("worldwide", "global", "anywhere"))
+        stmt = stmt.where(or_(*location_terms))
     monthly = monthly_salary_expr()
     if with_salary or salary_min is not None:
         stmt = stmt.where(monthly.is_not(None))
@@ -188,15 +234,28 @@ async def get_job(job_id: uuid.UUID, session: SessionDep, _user: CurrentUser) ->
     company = await session.get(Company, job.company_id)
     score = await session.scalar(select(JobScore).where(JobScore.job_id == job.id, JobScore.is_current.is_(True)))
     app = await app_service.get_for_job(session, job.id)
-    out: JobDetail = _job_out(job, company, score, app, JobDetail)
-    out.sources = [
-        JobSourceOut.model_validate(s) for s in (await session.scalars(select(JobSource).where(JobSource.job_id == job.id))).all()
-    ]
+    sources = list((await session.scalars(select(JobSource).where(JobSource.job_id == job.id))).all())
+    snapshots = list(
+        (
+            await session.scalars(
+                select(JobSnapshot).where(JobSnapshot.job_id == job.id).order_by(JobSnapshot.captured_at)
+            )
+        ).all()
+    )
+    quality = JobQualityOut.model_validate(
+        assess_job_quality(
+            job,
+            sources,
+            snapshots,
+            chance_breakdown=score.chance_breakdown if score else None,
+            company_name=company.name if company else None,
+        )
+    )
+    out: JobDetail = _job_out(job, company, score, app, JobDetail, quality)
+    out.sources = [JobSourceOut.model_validate(source) for source in sources]
     out.snapshots = [
         {"id": str(s.id), "reason": s.reason, "captured_at": s.captured_at.isoformat(), "sha256": s.sha256}
-        for s in (
-            await session.scalars(select(JobSnapshot).where(JobSnapshot.job_id == job.id).order_by(JobSnapshot.captured_at))
-        ).all()
+        for s in snapshots
     ]
     return out
 
@@ -219,6 +278,26 @@ async def get_snapshot(job_id: uuid.UUID, snapshot_id: uuid.UUID, session: Sessi
 async def import_job(body: JobImportIn, session: SessionDep, _user: CurrentUser) -> TaskAccepted:
     tr = await enqueue(session, "ingest.import_job", **body.model_dump())
     return TaskAccepted(task_id=tr.id)
+
+
+@router.post("/select")
+async def select_discovered_jobs(body: SelectDiscoveredIn, session: SessionDep, _user: CurrentUser) -> dict[str, int]:
+    """Move apenas vagas selecionadas em Descobrir para a fila de vagas novas."""
+    job_ids = set(body.job_ids)
+    jobs = list(
+        (
+            await session.scalars(
+                select(Job).where(Job.id.in_(job_ids), Job.status == "open", Job.triage == "discovered")
+            )
+        ).all()
+    )
+    if len(jobs) != len(job_ids):
+        raise HTTPException(409, "algumas vagas não estão mais aguardando seleção em Descobrir")
+    for job in jobs:
+        job.triage = "new"
+        await audit.record(session, actor="user", action="job.selected_for_queue", entity_type="job", entity_id=job.id)
+    await session.commit()
+    return {"selected": len(jobs)}
 
 
 @router.post("/{job_id}/feedback", status_code=204)
@@ -285,6 +364,11 @@ async def restore(job_id: uuid.UUID, session: SessionDep, _user: CurrentUser) ->
 
 
 # ---------- Buscas salvas ----------
+def reject_linkedin_source(sources: list[str]) -> None:
+    if "linkedin" in sources:
+        raise HTTPException(422, "A busca automática do LinkedIn foi removida. Use sites públicos ou boards de empresas.")
+
+
 @searches_router.get("", response_model=list[SavedSearchOut])
 async def list_searches(session: SessionDep, _user: CurrentUser) -> list[SavedSearch]:
     return list((await session.scalars(select(SavedSearch).order_by(SavedSearch.name))).all())
@@ -303,6 +387,7 @@ def _check_cron(expr: str) -> None:
 
 @searches_router.post("", response_model=SavedSearchOut, status_code=201)
 async def create_search(body: SavedSearchIn, session: SessionDep, _user: CurrentUser) -> SavedSearch:
+    reject_linkedin_source(body.sources)
     _check_cron(body.schedule_cron)
     row = SavedSearch(**body.model_dump())
     session.add(row)
@@ -313,6 +398,7 @@ async def create_search(body: SavedSearchIn, session: SessionDep, _user: Current
 @searches_router.put("/{search_id}", response_model=SavedSearchOut)
 async def update_search(search_id: uuid.UUID, body: SavedSearchIn, session: SessionDep, _user: CurrentUser) -> SavedSearch:
     row = await get_or_404(session, SavedSearch, search_id)
+    reject_linkedin_source(body.sources)
     _check_cron(body.schedule_cron)
     for k, v in body.model_dump().items():
         setattr(row, k, v)
@@ -327,8 +413,10 @@ async def delete_search(search_id: uuid.UUID, session: SessionDep, _user: Curren
     return Response(status_code=204)
 
 
-@searches_router.post("/{search_id}/run", status_code=202)
-async def run_search(search_id: uuid.UUID, session: SessionDep, _user: CurrentUser) -> dict[str, str]:
-    await get_or_404(session, SavedSearch, search_id)
-    dispatch("ingest.run_saved_search", search_id=str(search_id))
-    return {"status": "queued"}
+@searches_router.post("/{search_id}/run", response_model=TaskAccepted, status_code=202)
+async def run_search(search_id: uuid.UUID, session: SessionDep, _user: CurrentUser) -> TaskAccepted:
+    search = await get_or_404(session, SavedSearch, search_id)
+    if not set(search.sources) - {"linkedin"}:
+        raise HTTPException(409, "Esta busca salva só tinha LinkedIn. Abra-a em Descobrir e escolha outra fonte.")
+    task = await enqueue(session, "ingest.run_saved_search", search_id=str(search_id))
+    return TaskAccepted(task_id=task.id)

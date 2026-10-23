@@ -372,6 +372,10 @@ export function LatexGuide() {
                 Sem o Scoop? Baixe o .zip “x86_64-pc-windows-msvc” em <Ext href="https://github.com/tectonic-typesetting/tectonic/releases">releases do tectonic</Ext>{" "}
                 e coloque o <C>tectonic.exe</C> numa pasta do PATH.
               </p>
+              <p className="text-xs text-muted-foreground">
+                Se o app roda no Windows e o Tectonic está instalado no WSL2, ele é detectado na distro padrão. Verifique com{" "}
+                <C>wsl --exec zsh -ic &apos;tectonic --version&apos;</C> e reinicie o worker.
+              </p>
             </>
           ) : (
             <>
@@ -451,8 +455,8 @@ export function LinkedinGuide({ gmailConnected }: { gmailConnected: boolean }) {
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        As vagas do LinkedIn entram na aba <b>Vagas</b> por dois caminhos, sem robô e sem risco para a sua conta. Depois você se candidata normalmente,
-        com a extensão preenchendo o formulário (inclusive o Easy Apply).
+        As vagas do LinkedIn entram na aba <b>Vagas</b> por alertas enviados ao Gmail. A extensão não coleta resultados de busca: ela só analisa uma vaga
+        quando você a abre e auxilia no formulário quando você decide se candidatar.
       </p>
       <div className="rounded-xl border p-4">
         <p className="mb-3 text-sm font-semibold">Automático · alertas de vaga pelo Gmail (recomendado)</p>
@@ -475,14 +479,14 @@ export function LinkedinGuide({ gmailConnected }: { gmailConnected: boolean }) {
         </Steps>
       </div>
       <div className="rounded-xl border p-4">
-        <p className="mb-3 text-sm font-semibold">Na hora · importar a busca que está na sua tela</p>
+        <p className="mb-3 text-sm font-semibold">Na hora · analisar uma vaga específica</p>
         <Steps>
-          <Step n={1} title="Com a extensão instalada, abra uma busca de vagas no LinkedIn" />
-          <Step n={2} title={<>No painel do assistente, clique em <b>“Importar para o tracker”</b></>}>
-            <p>Ele envia as vagas visíveis na lista. Role a lista para carregar mais e importe de novo.</p>
+          <Step n={1} title="Abra manualmente uma vaga individual no LinkedIn" />
+          <Step n={2} title={<>No painel da extensão, escolha <b>“Avaliar e salvar vaga”</b></>}>
+            <p>A avaliação usa os detalhes da vaga aberta; resultados de busca não são extraídos em lote.</p>
           </Step>
-          <Step n={3} title="Ao abrir uma vaga, a descrição completa entra sozinha">
-            <p>A lista só tem título, empresa e local; quando você abre a vaga, o assistente lê a descrição e refaz a nota.</p>
+          <Step n={3} title="Candidate-se no site quando quiser">
+            <p>A extensão pode preencher o formulário, mas não clica em enviar por você.</p>
           </Step>
         </Steps>
       </div>

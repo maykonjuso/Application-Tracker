@@ -82,17 +82,18 @@ def choose_option(options: list[str], value: Any, prefer: list[str] | None = Non
             return norm_opts[n]
     for c in candidates:
         n = normalize_text(str(c))
-        for no, o in norm_opts.items():
-            if n and (n in no or no in n) and len(no) > 0:
-                return o
+        partial = [o for no, o in norm_opts.items() if n and (n in no or no in n) and len(no) > 0]
+        if len(partial) == 1:
+            return partial[0]
     if isinstance(value, int | float) or (isinstance(value, str) and re.fullmatch(r"\d+(\.\d+)?", value)):
         v = float(value)
+        matches: list[str] = []
         for o in options:  # faixas: "3-5 anos", "5+"
             nums = [float(x) for x in re.findall(r"\d+", o)]
-            if len(nums) == 2 and nums[0] <= v <= nums[1]:
-                return o
-            if len(nums) == 1 and "+" in o and v >= nums[0]:
-                return o
+            if (len(nums) == 2 and nums[0] <= v <= nums[1]) or (len(nums) == 1 and "+" in o and v >= nums[0]):
+                matches.append(o)
+        if len(matches) == 1:
+            return matches[0]
     yes_no = {"yes": ["yes", "sim"], "no": ["no", "nao", "não"]}
     sval = normalize_text(str(value)) if value is not None else ""
     for key, words in yes_no.items():

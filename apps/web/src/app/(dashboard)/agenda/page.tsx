@@ -3,7 +3,7 @@
 import { Calendar } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { Badge, Button, Card, CardTitle, EmptyState, Field, Input, PageHeader, Select, buttonVariants } from "@/components/ui";
+import { Badge, Button, Card, CardTitle, EmptyState, Field, Input, PageHeader, Select, SkeletonList, buttonVariants } from "@/components/ui";
 import { useGet, useSend } from "@/lib/hooks";
 
 type Event = { id: string; application_id: string | null; kind: string; title: string; description: string | null; starts_at: string; ends_at: string; location_or_link: string | null; status: string; google_event_id: string | null; meta: { conflicts?: string[]; local_only?: boolean; sync_error?: string } };
@@ -16,7 +16,7 @@ function dayKey(iso: string) {
 }
 
 export default function AgendaPage() {
-  const { data } = useGet<Event[]>(["calendar"], "/api/v1/calendar/events");
+  const { data, isLoading } = useGet<Event[]>(["calendar"], "/api/v1/calendar/events");
   const inv = { invalidate: [["calendar"], ["dashboard"]] };
   const confirm = useSend<string>("POST", (id) => `/api/v1/calendar/events/${id}/confirm`, { success: "Confirmado e enviado ao Google Agenda", ...inv });
   const cancel = useSend<string>("POST", (id) => `/api/v1/calendar/events/${id}/cancel`, { success: "Cancelado", ...inv });
@@ -26,7 +26,7 @@ export default function AgendaPage() {
     <div className="grid gap-4 xl:grid-cols-3">
       <div className="xl:col-span-2">
         <PageHeader icon={<Calendar size={20} />} title="Agenda" description="Eventos do processo seletivo (sincronizados com o Google Agenda quando conectado)" />
-        {groups.size === 0 ? (
+        {isLoading ? <SkeletonList count={4} /> : groups.size === 0 ? (
           <EmptyState title="Nada agendado" />
         ) : (
           [...groups.entries()].map(([day, evs]) => (

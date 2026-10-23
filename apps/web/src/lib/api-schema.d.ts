@@ -990,6 +990,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/select": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Select Discovered Jobs
+         * @description Move apenas vagas selecionadas em Descobrir para a fila de vagas novas.
+         */
+        post: operations["select_discovered_jobs_api_v1_jobs_select_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/feedback": {
         parameters: {
             query?: never;
@@ -2627,32 +2647,9 @@ export interface paths {
          * Analyze
          * @description Analisa a vaga da página (uma chamada de IA, cache de 90 dias) e avalia (Chance × Atratividade).
          *
-         *     Vaga já conhecida mas sem descrição (ex.: importada da lista de busca do LinkedIn) é completada com o
-         *     texto desta página e reavaliada.
+         *     Vaga já conhecida mas sem descrição é completada com o texto desta página e reavaliada.
          */
         post: operations["analyze_api_v1_assistant_analyze_post"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/assistant/import-list": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        /**
-         * Import List
-         * @description Vagas de uma lista de busca que VOCÊ abriu (ex.: LinkedIn): entram em Vagas e recebem nota.
-         *
-         *     Sem robô: a extensão só lê o que já está na sua tela. A descrição completa chega quando você abre a vaga.
-         */
-        post: operations["import_list_api_v1_assistant_import_list_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3875,13 +3872,6 @@ export interface components {
             /** Detail */
             detail?: components["schemas"]["ValidationError"][];
         };
-        /** ImportListIn */
-        ImportListIn: {
-            /** Source */
-            source: string;
-            /** Jobs */
-            jobs: components["schemas"]["ListedJob"][];
-        };
         /** ImportOut */
         ImportOut: {
             /**
@@ -4061,6 +4051,7 @@ export interface components {
             extra: {
                 [key: string]: unknown;
             };
+            quality: components["schemas"]["JobQualityOut"];
             /** Sources */
             sources?: components["schemas"]["JobSourceOut"][];
             /** Snapshots */
@@ -4142,6 +4133,36 @@ export interface components {
             /** Application Status */
             application_status?: string | null;
         };
+        /** JobQualityCheck */
+        JobQualityCheck: {
+            /** Key */
+            key: string;
+            /** Label */
+            label: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ok" | "warning" | "risk" | "unknown";
+            /** Detail */
+            detail: string;
+            /**
+             * Scoreable
+             * @default true
+             */
+            scoreable: boolean;
+        };
+        /** JobQualityOut */
+        JobQualityOut: {
+            /** Score */
+            score: number;
+            /** Summary */
+            summary: string;
+            /** Score Explanation */
+            score_explanation: string;
+            /** Checks */
+            checks: components["schemas"]["JobQualityCheck"][];
+        };
         /** JobSourceOut */
         JobSourceOut: {
             /** Source */
@@ -4206,30 +4227,6 @@ export interface components {
              * @default
              */
             current_profile: string;
-        };
-        /** ListedJob */
-        ListedJob: {
-            /** External Id */
-            external_id: string;
-            /** Title */
-            title: string;
-            /**
-             * Company
-             * @default
-             */
-            company: string;
-            /** Location */
-            location?: string | null;
-            /**
-             * Easy Apply
-             * @default false
-             */
-            easy_apply: boolean;
-            /**
-             * Text
-             * @default
-             */
-            text: string;
         };
         /** ManualApplicationIn */
         ManualApplicationIn: {
@@ -4892,6 +4889,11 @@ export interface components {
             seeded: {
                 [key: string]: number;
             };
+        };
+        /** SelectDiscoveredIn */
+        SelectDiscoveredIn: {
+            /** Job Ids */
+            job_ids: string[];
         };
         /** SimulateIn */
         SimulateIn: {
@@ -7416,6 +7418,41 @@ export interface operations {
             };
         };
     };
+    select_discovered_jobs_api_v1_jobs_select_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SelectDiscoveredIn"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     feedback_api_v1_jobs__job_id__feedback_post: {
         parameters: {
             query?: never;
@@ -7737,9 +7774,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: string;
-                    };
+                    "application/json": components["schemas"]["TaskAccepted"];
                 };
             };
             /** @description Validation Error */
@@ -10677,43 +10712,6 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
-                    };
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    import_list_api_v1_assistant_import_list_post: {
-        parameters: {
-            query?: never;
-            header?: {
-                authorization?: string | null;
-            };
-            path?: never;
-            cookie?: never;
-        };
-        requestBody: {
-            content: {
-                "application/json": components["schemas"]["ImportListIn"];
-            };
-        };
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": {
-                        [key: string]: number;
                     };
                 };
             };

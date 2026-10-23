@@ -30,6 +30,8 @@ def test_choose_option() -> None:
     assert choose_option(["Sim", "Não"], "Yes") == "Sim"
     assert choose_option(["United States (+1)", "Brazil (+55)"], "+55") == "Brazil (+55)"
     assert choose_option(["A", "B"], "Z") is None
+    assert choose_option(["Data Engineer", "Software Engineer"], "Engineer") is None
+    assert choose_option(["0-5 years", "5+ years"], 5) is None
 
 
 async def test_resolver_rules_gaps_and_sensitive(session, ai: FakeAIClient) -> None:

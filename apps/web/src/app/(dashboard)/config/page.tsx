@@ -100,7 +100,7 @@ function IntegrationsTab() {
       <GuideCard title="Extensão do navegador" ok={c.extension.ok} detail="painel da vaga, preenchimento e registro da candidatura">
         <ExtensionGuide />
       </GuideCard>
-      <GuideCard title="Vagas do LinkedIn" ok={c.google.ok} detail="alertas de vaga pelo Gmail e importação pela extensão">
+      <GuideCard title="Vagas do LinkedIn" ok={c.google.ok} detail="alertas pelo Gmail e análise manual de vagas individuais">
         <LinkedinGuide gmailConnected={c.google.ok} />
       </GuideCard>
       <GuideCard title="PDF dos currículos (tectonic)" ok={c.latex.ok} detail={c.latex.detail}>
@@ -157,7 +157,7 @@ function AutomationTab() {
 
 const LABEL: Record<string, string> = {
   fit_tecnico: "Aderência técnica", senioridade: "Senioridade", concorrencia: "Concorrência", frescor: "Frescor", responsividade: "Responsividade",
-  recrutador_ativo: "Recrutador ativo", nao_fantasma: "Não é fantasma", conexoes: "Conexões", reputacao: "Reputação", cultura: "Cultura",
+  recrutador_ativo: "Recrutador ativo", nao_fantasma: "Sinais de vaga fantasma", conexoes: "Conexões", reputacao: "Reputação", cultura: "Cultura",
   saude: "Saúde", remuneracao: "Remuneração", carreira: "Carreira", condicoes: "Condições", alinhamento: "Alinhamento",
 };
 

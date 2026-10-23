@@ -9,6 +9,7 @@
 | Acesso indevido ao dashboard | Login Google restrito a um e-mail, cookie HTTP-only + SameSite=Lax + Secure, CSRF token em mutações |
 | Agente falso conectando na API | Token de dispositivo com hash no banco, rotacionável, vinculado a um nome de máquina |
 | Prompt injection via e-mail/vaga ("ignore as instruções e...") | Conteúdo externo delimitado e declarado como dado; saídas estruturadas com enum; ações com efeito real nunca dependem só da IA |
+| Vaga desatualizada, incompleta ou com link suspeito | Checkup de origem, HTTPS, completude, data, repostagem e hash da captura; links fora de HTTP(S) ou com credenciais não são abertos pela interface |
 | IA "envia" algo indevido | Nenhuma ferramenta de envio de e-mail/mensagem existe no código; candidaturas passam pela política |
 | Bloqueio da conta do LinkedIn | Ver §5 e `16-riscos.md` |
 | Perda de dados | Backup diário criptografado, teste de restauração |
@@ -51,3 +52,10 @@
 - Compilação LaTeX isolada: container sem rede, sem `shell-escape`, timeout, diretório temporário.
 - Rate limit nos endpoints de autenticação e webhooks.
 - Dependências auditadas no CI (`pip-audit`, `pnpm audit`).
+
+## 8. Integridade das informações de vagas
+- O detalhe da vaga mostra uma pontuação de completude/consistência calculada por verificações determinísticas: fonte registrada, link de candidatura, empresa/cargo, descrição, data, repostagens e correspondência do texto com a captura armazenada.
+- A pontuação não é uma classificação de fraude nem comprova que a empresa ou a vaga é legítima. A aplicação não confirma a publicação no site oficial; o usuário deve verificar o anúncio antes de compartilhar dados pessoais ou financeiros.
+- Sinais suspeitos produzidos pela análise automática são avisos para revisão, não fatos verificados. A falta de sinais não é garantia de segurança.
+- A heurística de vaga fantasma mostra os motivos considerados: penaliza 2 ou mais repostagens, publicação acima de 60 dias, descrição marcada como genérica e relatos de demissões recentes. Ausência desses indícios não prova que exista processo seletivo ativo; dados indisponíveis devem aparecer como desconhecidos.
+- O hash detecta divergência entre o texto atual e a captura guardada, mas não autentica a fonte original nem protege contra alteração conjunta dos dados e do hash.

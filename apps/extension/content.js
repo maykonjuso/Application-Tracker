@@ -19,7 +19,7 @@
 
   const state = {
     filling: false, epoch: 0, cfg: null, card: null, pageInfo: null, fields: [], status: new Map(), edits: new Map(),
-    reported: false, busy: false, msg: "", minimized: false, hidden: false, logo: null, linkedinList: [], forcedPanel: false,
+    reported: false, busy: false, msg: "", minimized: false, hidden: false, logo: null, forcedPanel: false,
     relevant: false, failures: 0, showFilled: false, tab: {}, tailor: null,
   };
 
@@ -108,8 +108,9 @@
         if (less) return num < +(less[1] || less[2] || less[3] || less[4] || less[5]);
         return false;
       });
+      if (ranges.length === 1) return ranges[0];
     }
-    return idx;
+    return -1;
   }
 
   // ---------------- leitura dos campos (rótulos acessíveis) ----------------
@@ -437,7 +438,7 @@
       const { filled } = await fillFields(pending, true);
       state.failures = 0;
       state.msg = filled ? `✨ ${filled} resposta(s) escritas pela IA (contorno azul). Leia e ajuste se precisar.` : "A IA não encontrou o que responder nos campos restantes.";
-    } catch (e) { state.msg = `A IA falhou: ${e.message}`; }
+    } catch (e) { state.msg = `A IA falhou: ${explainError(e)}`; }
     state.busy = false;
     render();
   }
@@ -599,7 +600,7 @@
     badge();
     if (!active() || !panelAllowed()) { if (host && !active()) teardown(); return; }
     if (!IS_TOP && !state.fields.length) return;
-    if (!state.forcedPanel && !state.card && !state.pageInfo?.looks_like_job && !state.linkedinList.length && !(state.fields.length && applyContext())) return;
+    if (!state.forcedPanel && !state.card && !state.pageInfo?.looks_like_job && !(state.fields.length && applyContext())) return;
     ensureHost();
     const c = state.card;
     const fieldsTotal = state.fields.length;
@@ -631,9 +632,6 @@
       if (s?.missing_must?.length) body += `<div class="muted">Você não tem: ${esc(s.missing_must.slice(0, 4).join(", "))}</div>`;
       if (c.application?.submitted_at) body += `<div class="msg ok">${ICON.check} Você já se candidatou a esta vaga.</div>`;
       body += tailorSection(c);
-    } else if (state.linkedinList.length) {
-      body += `<div class="sec"><h4>${state.linkedinList.length} vaga(s) nesta busca do LinkedIn</h4><div class="muted">Envie para a aba Vagas do tracker: elas recebem nota e você se candidata com o assistente.</div>
-        <div class="btns" style="margin-top:8px"><button class="b b1 grow" id="import">Importar para o tracker</button></div></div>`;
     } else if (state.pageInfo?.looks_like_job) {
       body += `<div class="sec"><h4>Vaga nova</h4><div class="muted">Ainda não está no seu tracker. Avaliar usa uma chamada de IA.</div><div class="btns" style="margin-top:8px"><button class="b b1 grow" id="an">Avaliar e salvar vaga</button></div></div>`;
     }
@@ -699,7 +697,6 @@
       addEventListener("mousemove", move, true); addEventListener("mouseup", up, true);
     };
     on("an", () => analyze(false));
-    on("import", importLinkedin);
     on("ai", aiFill);
     on("refill", () => { state.status.clear(); state.failures = 0; autoFill(false, true); });
     on("undo", undoFill);
@@ -861,37 +858,6 @@
     finally { setTimeout(() => { state.filling = false; }, 50); }
   }
 
-  // ---------------- LinkedIn: importar as vagas da busca ----------------
-  const isLinkedinSearch = () => /linkedin\.com\/jobs\/(search|collections)/.test(location.href);
-  function scrapeLinkedin() {
-    const out = new Map();
-    document.querySelectorAll('a[href*="/jobs/view/"]').forEach((a) => {
-      const m = a.href.match(/\/jobs\/view\/(\d+)/);
-      if (!m || out.has(m[1])) return;
-      const card = a.closest("li, .job-card-container, [data-job-id], [data-occludable-job-id]") || a.parentElement;
-      // o LinkedIn repete o título (texto visível + texto para leitor de tela): fica com a primeira linha
-      let title = (a.querySelector("strong") ? firstLine(a.querySelector("strong")) : firstLine(a)) || a.getAttribute("aria-label") || "";
-      title = title.replace(/\s+with verification$/i, "").trim();
-      const half = title.length / 2;
-      if (Number.isInteger(half) && title.slice(0, half).trim() === title.slice(half).trim()) title = title.slice(0, half).trim();
-      if (!title) return;
-      const lines = (card?.innerText || "").split("\n").map((s) => s.trim()).filter((s) => s && s !== title && !s.startsWith(title));
-      const company = txt(card?.querySelector(".artdeco-entity-lockup__subtitle, .job-card-container__primary-description, .job-card-container__company-name")) || lines[0] || "";
-      const location_ = txt(card?.querySelector(".job-card-container__metadata-item, .artdeco-entity-lockup__caption")) || lines[1] || "";
-      out.set(m[1], { external_id: m[1], title: title.slice(0, 300), company: company.slice(0, 200), location: location_.slice(0, 200), easy_apply: /easy apply|candidatura simplificada/i.test(card?.innerText || ""), text: (card?.innerText || "").slice(0, 1500) });
-    });
-    return [...out.values()].slice(0, 200);
-  }
-  async function importLinkedin() {
-    const jobs = scrapeLinkedin();
-    if (!jobs.length) return say("Não encontrei vagas na lista. Role a lista para carregar e tente de novo.");
-    say(`Importando ${jobs.length} vaga(s)…`);
-    try {
-      const r = await api("POST", "/import-list", { source: "linkedin", jobs });
-      say(`✓ ${r.created} nova(s) e ${r.existing} já conhecida(s). Elas aparecem em Vagas com nota em instantes. Role a lista para ver mais e importe de novo.`);
-    } catch (e) { say(`Erro ao importar: ${e.message}`); }
-  }
-
   // ---------------- sugestão ao clicar num campo ----------------
   let bubble, hideTimer;
   const cache = new Map();
@@ -1041,7 +1007,7 @@
       if (!res.already) bg({ type: "stat", field: "apps" }).catch(() => {});
       state.minimized = false; state.hidden = false; state.forcedPanel = true; // confirmação importante: o painel abre para mostrar
       say(res.already ? "Esta candidatura já estava no seu acompanhamento." : "✓ Candidatura adicionada ao seu acompanhamento.");
-    } catch (e) { state.reported = false; say(`Erro ao registrar: ${e.message}`); }
+    } catch (e) { state.reported = false; say(`Erro ao registrar: ${explainError(e)}`); }
   }
   function markSubmit() { tab.set({ formSubmitted: Date.now(), answers: answers() }); }
 
@@ -1054,7 +1020,6 @@
       scanTimer = setTimeout(() => {
         if (!active()) return;
         if (state.cfg?.autoRegister !== false && recentSubmit() && SUCCESS.test(pageText())) { reportSubmitted(false); return; }
-        if (isLinkedinSearch()) { const list = scrapeLinkedin(); if (list.length !== state.linkedinList.length) { state.linkedinList = list; render(); } }
         // formulários em etapas: campos novos são preenchidos assim que aparecem
         const all = extractFields();
         const fresh = all.filter((f) => !state.status.has(f.key));
@@ -1094,10 +1059,9 @@
     if (!active() || epoch !== state.epoch) return;
     if (state.cfg.autoRegister !== false && tab.get().jobUrl && recentSubmit() && SUCCESS.test(pageText())) { state.relevant = true; wire(); await reportSubmitted(false); return; }
     state.fields = extractFields();
-    if (isLinkedinSearch()) state.linkedinList = scrapeLinkedin();
     // iframes: só formulários de ATS conhecidos (Greenhouse/Lever embutidos), nunca de terceiros quaisquer
     if (!IS_TOP && !(knownHost() && state.fields.length)) return;
-    state.relevant = localLooksRelevant() || formLooksLikeApplication(state.fields) || !!tab.get().jobId || state.linkedinList.length > 0;
+    state.relevant = localLooksRelevant() || formLooksLikeApplication(state.fields) || !!tab.get().jobId;
     wire(); // escuta mudanças (formulário que aparece depois), mas só age quando a página é relevante
     if (!state.relevant) return;
     try { await classify(); } catch { state.pageInfo = { looks_like_job: false }; }
@@ -1109,7 +1073,7 @@
   function reset() {
     state.epoch++;
     state.card = null; state.pageInfo = null; state.reported = false; state.status.clear(); state.edits.clear(); cache.clear();
-    state.msg = ""; state.logo = null; state.tailor = null; state.linkedinList = []; state.fields = []; state.failures = 0; state.hidden = false; state.forcedPanel = false;
+    state.msg = ""; state.logo = null; state.tailor = null; state.fields = []; state.failures = 0; state.hidden = false; state.forcedPanel = false;
     hideBubble();
   }
 

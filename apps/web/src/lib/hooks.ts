@@ -18,18 +18,19 @@ export function useGet<T>(key: QueryKey, path: string | null, opts?: { refetchIn
   });
 }
 
-type MutOpts = { success?: string; invalidate?: QueryKey[] };
+type MutOpts<TBody> = { success?: string; invalidate?: QueryKey[]; requestBody?: (body: TBody) => unknown };
 
 /** POST/PUT/PATCH/DELETE com toast e invalidação. */
-export function useSend<TBody = unknown, TOut = unknown>(method: string, path: string | ((v: TBody) => string), opts: MutOpts = {}) {
+export function useSend<TBody = unknown, TOut = unknown>(method: string, path: string | ((v: TBody) => string), opts: MutOpts<TBody> = {}) {
   const qc = useQueryClient();
   return useMutation<TOut, ApiError, TBody>({
     mutationFn: async (body: TBody) => {
       const url = typeof path === "function" ? path(body) : path;
+      const requestBody = opts.requestBody ? opts.requestBody(body) : body;
       const res = await rawFetch(url, {
         method,
         headers: { "content-type": "application/json" },
-        body: body === undefined || method === "GET" ? undefined : JSON.stringify(body),
+        body: requestBody === undefined || method === "GET" ? undefined : JSON.stringify(requestBody),
       });
       const text = await res.text();
       return (text ? JSON.parse(text) : null) as TOut;

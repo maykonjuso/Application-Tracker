@@ -4,7 +4,7 @@ import { CompanyLogo } from "@/components/brand";
 import { Mic } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Select, Tabs } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Select, SkeletonList, Tabs } from "@/components/ui";
 import { useGet, useSend } from "@/lib/hooks";
 import { INTERVIEW_KIND } from "@/lib/labels";
 import { formatDateTime } from "@/lib/utils";
@@ -25,7 +25,8 @@ export default function InterviewsPage() {
 }
 
 function List({ upcoming }: { upcoming: boolean }) {
-  const { data } = useGet<Interview[]>(["interviews", upcoming], `/api/v1/interviews?upcoming=${upcoming}`);
+  const { data, isLoading } = useGet<Interview[]>(["interviews", upcoming], `/api/v1/interviews?upcoming=${upcoming}`);
+  if (isLoading) return <SkeletonList count={4} className="md:grid-cols-2" />;
   if (!data?.length) return <EmptyState title="Nenhuma entrevista">Convites detectados no Gmail aparecem aqui automaticamente.</EmptyState>;
   return (
     <div className="grid gap-3 md:grid-cols-2">
@@ -89,8 +90,9 @@ function NewInterview() {
 }
 
 function Assessments() {
-  const { data } = useGet<Assessment[]>(["assessments"], "/api/v1/assessments");
+  const { data, isLoading } = useGet<Assessment[]>(["assessments"], "/api/v1/assessments");
   const update = useSend<Assessment>("PUT", (a) => `/api/v1/assessments/${a.id}`, { success: "Atualizado", invalidate: [["assessments"]] });
+  if (isLoading) return <SkeletonList count={3} />;
   if (!data?.length) return <EmptyState title="Nenhum teste técnico" />;
   return (
     <div className="space-y-2">

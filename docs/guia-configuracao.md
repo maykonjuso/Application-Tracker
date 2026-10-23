@@ -89,7 +89,43 @@ Abra **http://localhost:3100**, clique em **Entrar** e siga o onboarding:
 
 O app usa IA para ler vagas, montar currículos e classificar e-mails. **Escolha um** dos caminhos.
 
-### Opção A: Claude Code com a sua assinatura (recomendado)
+### Opção A: Ollama local (Qwen, sem custo por chamada)
+
+Com o Ollama acessível em `http://localhost:11434`, baixe o modelo:
+
+```bash
+ollama pull qwen2.5-coder:3b
+```
+
+Se estiver usando o container Podman `ollama` no Fedora WSL:
+
+```powershell
+wsl -d FedoraLinux-43 -- podman start ollama
+wsl -d FedoraLinux-43 -- podman exec ollama ollama pull qwen2.5-coder:3b
+```
+
+No `.env`, selecione o backend local:
+
+```dotenv
+AI_BACKEND=ollama
+AI_MODEL_DEFAULT=qwen2.5-coder:3b
+AI_MODEL_JOB_EXTRACT=qwen2.5-coder:3b
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+Reinicie o `tracker-dev`. O teste da IA no onboarding confirma se o Ollama e o modelo estão acessíveis. PDFs com texto selecionável são convertidos localmente em texto; PDFs digitalizados e imagens não têm OCR. Tarefas que exigem busca na web precisam de um backend compatível com as ferramentas de pesquisa.
+
+### Tectonic instalado no WSL2
+
+Se a API/worker roda no Windows e o Tectonic está instalado apenas no WSL2, o app tenta localizá-lo automaticamente na distro WSL padrão. Confirme no terminal:
+
+```powershell
+wsl --exec zsh -ic 'tectonic --version'
+```
+
+O comando deve retornar a versão do Tectonic. Instale-o na distro padrão (ou selecione como padrão a distro onde já está instalado) e reinicie o `tracker-dev` para o worker detectar a integração.
+
+### Opção B: Claude Code com a sua assinatura
 
 Sem custo além da assinatura Claude Pro/Max. Nada a colocar no `.env`.
 
@@ -101,7 +137,7 @@ Sem custo além da assinatura Claude Pro/Max. Nada a colocar no `.env`.
 
 Cada uso conta no limite da sua assinatura. Para poupar, a leitura em massa de vagas usa o Sonnet (`AI_MODEL_JOB_EXTRACT` no `.env`).
 
-### Opção B: chave da API da Anthropic (pago por uso)
+### Opção C: chave da API da Anthropic (pago por uso)
 
 1. Em [console.anthropic.com](https://console.anthropic.com), vá em **Billing** e coloque créditos (US$ 5–10 bastam para começar). Defina um limite mensal ali também.
 2. **API Keys → Create Key**. A chave começa com `sk-ant-` e só aparece uma vez.
@@ -196,21 +232,22 @@ Ela nunca envia nada sozinha.
 
 API fora do seu PC (ex.: numa VPS)? Ao salvar outro endereço nas Opções, o navegador pede permissão para a extensão falar com ele.
 
+Para buscar vagas por palavras-chave, abra **Vagas → Descobrir**, digite o cargo/tecnologia, escolha país, modalidade e fontes públicas, e clique em **Buscar vagas agora**. Você também pode adicionar seus próprios boards públicos Greenhouse, Lever, Ashby e Gupy pelo link do quadro de vagas; páginas genéricas ainda não são suportadas. A busca fica salva para execução automática e os resultados são exibidos em **Vagas para revisar**: selecione as vagas que deseja e clique em **Enviar selecionadas para a Fila**. Nenhuma vaga coletada entra na Fila sem essa seleção. A descoberta não automatiza nem coleta resultados do LinkedIn. Para editar uma busca salva, selecione-a no campo **Editar uma busca salva**, altere os filtros/fontes e execute novamente. A aba **Empresas (ATS)** continua disponível para cadastrar fontes de empresas específicas.
+
 ---
 
 ## 8. Vagas do LinkedIn
 
-Sem robô e sem risco para a sua conta. Dois caminhos:
+Sem robô e sem coleta automatizada dos resultados de busca. As vagas chegam por alertas no Gmail; você também pode analisar manualmente uma vaga individual.
 
 **Automático (recomendado): alertas de vaga pelo Gmail**
 1. No LinkedIn, em **Vagas**, faça a busca que quer acompanhar (cargo, local, remoto, Easy Apply…).
 2. Ligue **"Ativar alerta"** no topo dos resultados. Em **Gerenciar alertas**, frequência **diária** e notificação por **e-mail**.
 3. Com o Gmail conectado (seção 5), cada e-mail de alerta vira vagas na aba **Vagas**, com nota, e o e-mail ganha o marcador `Vagas/LinkedIn`.
 
-**Na hora: importar a busca da sua tela**
-1. Com a extensão instalada, abra uma busca de vagas no LinkedIn.
-2. No painel do assistente, clique em **"Importar para o tracker"**. Role a lista para carregar mais e importe de novo.
-3. Ao abrir uma vaga, a descrição completa entra sozinha e a nota é refeita.
+**Na hora: analisar uma vaga específica**
+1. Com a extensão instalada, abra manualmente a página de uma vaga individual no LinkedIn.
+2. No painel do assistente, escolha **"Avaliar e salvar vaga"**. A extensão analisa a vaga aberta, não os resultados de busca.
 
 Para se candidatar (inclusive no Easy Apply), a extensão preenche o formulário; quem clica em enviar é você.
 
@@ -230,6 +267,6 @@ Para se candidatar (inclusive no Easy Apply), a extensão preenche o formulário
 | "localhost recusou a conexão" ao abrir um PDF | O app não estava rodando (API na 8000, dashboard na 3100). Confira os terminais do passo 3. |
 | Porta 5432/5433 ocupada | O compose usa a 5433. Se ela também estiver em uso, mude o mapeamento em `infra/docker-compose.yml` e a `DATABASE_URL` no `.env`. |
 | PDFs dos currículos não geram | Instale o `tectonic` (seção 1) e reinicie o worker. |
-| Vagas do LinkedIn não aparecem | Confira se o Gmail está conectado e se os alertas do LinkedIn chegam por e-mail; ou use "Importar para o tracker" na extensão. |
+| Vagas do LinkedIn não aparecem | Confira se o Gmail está conectado e se os alertas oficiais de vagas do LinkedIn chegam por e-mail. A descoberta não coleta resultados do site. |
 | Extensão não aparece na página da vaga | Confira o token e o endereço da API nas Opções, se a API está rodando, e recarregue a página. Em WSL, confirme que copiou a versão mais nova (seção 7). |
 | Telegram não responde aos comandos | Só uma instância da API pode estar rodando; confira `TELEGRAM_BOT_TOKEN` e reinicie. |

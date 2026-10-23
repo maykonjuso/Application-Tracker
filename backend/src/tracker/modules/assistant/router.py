@@ -159,8 +159,7 @@ async def _extract_page(session: SessionDep, body: PageIn) -> JobNormalized:
 async def analyze(body: PageIn, session: SessionDep, _a: Auth) -> dict[str, Any]:
     """Analisa a vaga da página (uma chamada de IA, cache de 90 dias) e avalia (Chance × Atratividade).
 
-    Vaga já conhecida mas sem descrição (ex.: importada da lista de busca do LinkedIn) é completada com o
-    texto desta página e reavaliada."""
+    Vaga já conhecida mas sem descrição é completada com o texto desta página e reavaliada."""
     job = await service.find_job(session, body.url)
     if job is None and service.is_flow_page(body.url):
         raise HTTPException(422, "esta tela é login ou etapa da candidatura, não uma vaga; abra a página da vaga")
@@ -201,53 +200,6 @@ async def analyze(body: PageIn, session: SessionDep, _a: Auth) -> dict[str, Any]
     await score_and_route(sessionmaker_from(session), str(job.id))
     await session.refresh(job)
     return await service.job_card(session, job)
-
-
-class ListedJob(BaseModel):
-    external_id: str = Field(max_length=64)
-    title: str = Field(max_length=300)
-    company: str = Field(default="", max_length=200)
-    location: str | None = Field(default=None, max_length=200)
-    easy_apply: bool = False
-    text: str = Field(default="", max_length=3000)
-
-
-class ImportListIn(BaseModel):
-    source: str = Field(pattern="^linkedin$")
-    jobs: list[ListedJob] = Field(max_length=200)
-
-
-@router.post("/import-list")
-async def import_list(body: ImportListIn, session: SessionDep, _a: Auth) -> dict[str, int]:
-    """Vagas de uma lista de busca que VOCÊ abriu (ex.: LinkedIn): entram em Vagas e recebem nota.
-
-    Sem robô: a extensão só lê o que já está na sua tela. A descrição completa chega quando você abre a vaga."""
-    created = existing = 0
-    for item in body.jobs:
-        if not item.title.strip() or not item.company.strip():
-            continue
-        url = f"https://www.linkedin.com/jobs/view/{item.external_id}/"
-        job, is_new = await job_service.upsert_job(
-            session,
-            RawJob(
-                source="linkedin",
-                external_id=item.external_id,
-                title=item.title.strip(),
-                company_name=item.company.strip(),
-                url=url,
-                location=item.location,
-                description_text=item.text,
-                apply_url=url,
-                apply_kind="easy_apply" if item.easy_apply else "unknown",
-            ),
-        )
-        await session.commit()
-        if is_new:
-            created += 1
-            dispatch("ai.process_job", job_id=str(job.id))
-        else:
-            existing += 1
-    return {"created": created, "existing": existing}
 
 
 @router.get("/logo")

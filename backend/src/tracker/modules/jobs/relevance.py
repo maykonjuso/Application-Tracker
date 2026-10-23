@@ -41,6 +41,48 @@ def split_terms(query: str) -> list[str]:
     return [normalize_title(t) for t in re.split(r"\||\bOR\b|,", query) if t.strip()]
 
 
+def search_variants(query: str) -> list[str]:
+    """Add the common Go/Golang spelling used by job boards and their tags."""
+    normalized = normalize_title(query)
+    if normalized == "go":
+        return [query, "Golang"]
+    if normalized == "golang":
+        return [query, "Go"]
+    return [query]
+
+
+def country_aliases(country: str) -> tuple[str, ...]:
+    normalized = normalize_title(country)
+    aliases = {
+        "united states": ("united states", "united states of america", "usa", "us"),
+        "united states of america": ("united states", "united states of america", "usa", "us"),
+        "usa": ("united states", "united states of america", "usa", "us"),
+        "us": ("united states", "united states of america", "usa", "us"),
+    }
+    return aliases.get(normalized, ())
+
+
+def location_matches_country(location: str | None, country: str) -> bool:
+    normalized_location = normalize_title(location or "")
+    if not normalized_location:
+        return False
+    if any(
+        re.search(rf"(?<![a-z0-9]){re.escape(alias)}(?![a-z0-9])", normalized_location)
+        for alias in country_aliases(country)
+    ):
+        return True
+    if country_aliases(country):
+        return any(
+            re.search(rf"(?<![a-z0-9]){term}(?![a-z0-9])", normalized_location)
+            for term in ("worldwide", "global", "anywhere")
+        )
+    normalized_country = normalize_title(country)
+    return bool(
+        normalized_country
+        and re.search(rf"(?<![a-z0-9]){re.escape(normalized_country)}(?![a-z0-9])", normalized_location)
+    )
+
+
 async def terms(session: AsyncSession) -> list[str]:
     prefs = await profile_service.get_preferences(session)
     out: list[str] = [normalize_title(r) for r in prefs.target_roles]
@@ -50,8 +92,21 @@ async def terms(session: AsyncSession) -> list[str]:
 
 
 def matches(title: str, terms_: list[str]) -> bool:
-    t = f" {normalize_title(title)} "
-    return any(all(f" {w} " in t or w in t for w in term.split()) for term in terms_)
+    words = set(normalize_title(title).split())
+    return any(
+        all(word in words for word in term.split())
+        or (term == "go" and "golang" in words)
+        or (term == "golang" and "go" in words)
+        for term in terms_
+    )
+
+
+def matches_raw(raw: RawJob, terms_: list[str]) -> bool:
+    tags = raw.raw.get("tags") or []
+    if isinstance(tags, str):
+        tags = [tags]
+    text = " ".join([raw.title, raw.description_text or "", *(str(tag) for tag in tags)])
+    return matches(text, terms_)
 
 
 # Senioridade/função que nunca interessam (estágio, gestão): cortadas antes de gastar IA.
@@ -85,12 +140,18 @@ def location_ok(location: str | None, brazilian_company: bool, international: bo
 
 
 def filter_relevant(
-    raws: list[RawJob], terms_: list[str], brazilian_company: bool | None = None, international: bool = True
+    raws: list[RawJob],
+    terms_: list[str],
+    brazilian_company: bool | None = None,
+    international: bool = True,
+    search_in_description: bool = False,
 ) -> list[RawJob]:
-    """Título bate com os termos, sem estágio/gestão e (se `brazilian_company` for informado) com local acessível do Brasil."""
+    """Filtra por termos, sem estágio/gestão e, se solicitado, por localização acessível."""
     out: list[RawJob] = []
     for r in raws:
-        if not matches(r.title, terms_) or EXCLUDED_TITLE.search(_fold(r.title)):
+        title_match = matches(r.title, terms_)
+        description_match = search_in_description and matches_raw(r, terms_)
+        if not (title_match or description_match) or EXCLUDED_TITLE.search(_fold(r.title)):
             continue
         if brazilian_company is not None and not location_ok(r.location, brazilian_company, international):
             continue

@@ -49,7 +49,7 @@ Convenções:
 | Método | Rota | Descrição |
 |---|---|---|
 | GET | `/jobs?quadrant=&status=&q=&sort=priority` | |
-| GET | `/jobs/{id}` | Inclui score, fontes, snapshots |
+| GET | `/jobs/{id}` | Inclui score, fontes, snapshots e checkup de completude/consistência; não atesta legitimidade |
 | POST | `/jobs/import` | `{url}` ou `{text}` (202) |
 | POST | `/jobs/{id}/feedback` | `{verdict, reason}` |
 | POST | `/jobs/{id}/rescore` | |
@@ -120,6 +120,13 @@ Convenções:
 | POST | `/agent/kill` | Kill switch |
 | POST | `/export` · DELETE `/data` | Exportação / exclusão total |
 | GET | `/health` | |
+
+## Extensão do navegador
+| Método | Rota | Descrição |
+|---|---|---|
+| POST | `/assistant/token` | Gera o token de instalação da extensão (sessão do dashboard) |
+
+A extensão não automatiza nem coleta resultados de busca do LinkedIn. Descoberta de vagas usa boards públicos, fontes ATS configuradas pelo usuário e empresas monitoradas.
 
 ## Webhooks
 | Rota | Origem |

@@ -3,7 +3,7 @@
 import { CompanyLogo } from "@/components/brand";
 import { Wallet } from "lucide-react";
 import { useState } from "react";
-import { Badge, Button, Card, CardTitle, EmptyState, Field, Input, Modal, PageHeader, Select } from "@/components/ui";
+import { Badge, Button, Card, CardTitle, EmptyState, Field, Input, Modal, PageHeader, Select, SkeletonList } from "@/components/ui";
 import { useGet, useSend, useTask } from "@/lib/hooks";
 import { formatDateTime, money } from "@/lib/utils";
 
@@ -62,16 +62,16 @@ type Offer = {
 };
 
 export default function OffersPage() {
-  const { data } = useGet<Offer[]>(["offers"], "/api/v1/offers");
-  const { data: current } = useGet<{ config: CurrentCfg; annualized: Annual | null }>(["offers", "current"], "/api/v1/offers/current");
+  const { data, isLoading } = useGet<Offer[]>(["offers"], "/api/v1/offers");
+  const { data: current, isLoading: currentLoading } = useGet<{ config: CurrentCfg; annualized: Annual | null }>(["offers", "current"], "/api/v1/offers/current");
   const [open, setOpen] = useState(false);
   const base = current?.annualized?.annual_net ?? null;
   const sorted = [...(data ?? [])].sort((a, b) => b.annualized.annual_net - a.annualized.annual_net);
   return (
     <div className="space-y-4">
       <PageHeader icon={<Wallet size={20} />} title="Ofertas" description="Compare propostas pelo valor anual líquido (CLT e PJ na mesma régua)" actions={<Button onClick={() => setOpen(true)}>Registrar proposta</Button>} />
-      {current && <CurrentJob cfg={current.config} annual={current.annualized} />}
-      {sorted.length === 0 ? <EmptyState title="Nenhuma proposta ainda" /> : (
+      {currentLoading ? <SkeletonList count={1} /> : current && <CurrentJob cfg={current.config} annual={current.annualized} />}
+      {isLoading ? <SkeletonList count={2} className="lg:grid-cols-2" /> : sorted.length === 0 ? <EmptyState title="Nenhuma proposta ainda" /> : (
         <div className="grid gap-3 lg:grid-cols-2">{sorted.map((o, i) => <OfferCard key={o.id} o={o} best={i === 0 && sorted.length > 1} base={base} />)}</div>
       )}
       <Simulator />

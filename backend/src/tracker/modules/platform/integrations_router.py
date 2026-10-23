@@ -45,6 +45,7 @@ async def integrations(session: SessionDep, _user: CurrentUser) -> dict[str, Any
             "budget_usd": s.ai_monthly_budget_usd,
         },
         "telegram": {"bot_configured": bool(s.telegram_bot_token)},
+        "agent": {"token_set": bool(s.agent_device_token)},
     }
 
 

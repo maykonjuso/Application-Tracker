@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-import shutil
+import os
+import subprocess
 from datetime import date
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from tests.factories import master
 from tracker.modules.profile import facts
 from tracker.modules.resumes import ats, content, render, validator
+from tracker.modules.resumes.latex import _wsl_tectonic_version, find_latex_compiler
 from tracker.modules.resumes.schemas import ResumeContent
 
 
@@ -101,13 +103,46 @@ def test_pdf_filename() -> None:
     assert render.pdf_filename(master(), "Data Engineer", "en") == "Ana_Silva_Data_Engineer_EN.pdf"
 
 
+def test_find_native_tectonic(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("tracker.modules.resumes.latex.shutil.which", lambda _: "/usr/bin/tectonic")
+    compiler = find_latex_compiler("tectonic")
+    assert compiler is not None
+    assert compiler.tectonic
+    assert compiler.command == ("/usr/bin/tectonic",)
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Fallback WSL2 só existe no Windows")
+def test_find_tectonic_in_wsl(monkeypatch: pytest.MonkeyPatch) -> None:
+    def which(executable: str) -> str | None:
+        return "C:\\Windows\\System32\\wsl.exe" if executable == "wsl.exe" else None
+
+    def run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args[0], 0, stdout="Tectonic 0.17.0\n", stderr="")
+
+    _wsl_tectonic_version.cache_clear()
+    monkeypatch.setattr("tracker.modules.resumes.latex.shutil.which", which)
+    monkeypatch.setattr("tracker.modules.resumes.latex.subprocess.run", run)
+
+    compiler = find_latex_compiler("tectonic")
+    assert compiler is not None
+    assert compiler.tectonic
+    assert compiler.detail == "Tectonic 0.17.0 (WSL2)"
+    assert compiler.command[:5] == (
+        "C:\\Windows\\System32\\wsl.exe",
+        "--exec",
+        "sh",
+        "-c",
+        'if command -v tectonic >/dev/null 2>&1; then exec tectonic "$@"; elif [ -x "$HOME/.local/bin/tectonic" ]; then exec "$HOME/.local/bin/tectonic" "$@"; else exit 127; fi',
+    )
+
+
 def test_keyword_coverage() -> None:
     cov, missing = ats.keyword_coverage("Python and Apache Spark pipelines", ["Python", "Spark", "Rust"])
     assert cov == pytest.approx(0.667, abs=0.01)
     assert missing == ["Rust"]
 
 
-@pytest.mark.skipif(shutil.which("tectonic") is None, reason="tectonic não instalado")
+@pytest.mark.skipif(find_latex_compiler() is None, reason="tectonic não instalado")
 def test_render_compiles_pdf_with_special_chars() -> None:
     m = master()
     c = content.baseline(m, "data_engineer", "pt")

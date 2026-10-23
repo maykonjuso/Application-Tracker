@@ -47,7 +47,7 @@ class LocalStorage:
         base = self.root / _safe_key(prefix) if prefix.strip("/") else self.root
         if not base.exists():
             return []
-        return sorted(str(p.relative_to(self.root)) for p in base.rglob("*") if p.is_file())
+        return sorted(p.relative_to(self.root).as_posix() for p in base.rglob("*") if p.is_file())
 
     def exists(self, key: str) -> bool:
         return self._path(key).is_file()

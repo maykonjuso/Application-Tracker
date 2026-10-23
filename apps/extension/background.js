@@ -4,7 +4,7 @@ const DEFAULTS = globalThis.TRACKER_DEFAULTS;
 const logos = new Map(); // cache por empresa durante a sessão do navegador
 
 // O que um content script pode pedir à API (o resto só popup/opções, que são páginas da própria extensão).
-const PAGE_API = new Set(["POST /page", "POST /analyze", "POST /fields", "POST /suggest", "POST /submitted", "POST /import-list", "POST /tailor"]);
+const PAGE_API = new Set(["POST /page", "POST /analyze", "POST /fields", "POST /suggest", "POST /submitted", "POST /tailor"]);
 const PAGE_API_RE = [/^GET \/tasks\/[0-9a-f-]{36}$/i, /^POST \/tailored\/[0-9a-f-]{36}\/approve$/i];
 const pageAllowed = (m, p) => PAGE_API.has(`${m} ${p}`) || PAGE_API_RE.some((r) => r.test(`${m} ${p}`));
 

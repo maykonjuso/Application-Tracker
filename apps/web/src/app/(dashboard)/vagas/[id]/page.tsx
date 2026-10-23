@@ -50,7 +50,7 @@ type JobDetail = {
 
 const FEATURE_LABEL: Record<string, string> = {
   fit_tecnico: "Aderência técnica", senioridade: "Senioridade", concorrencia: "Concorrência", frescor: "Frescor",
-  responsividade: "Responsividade", recrutador_ativo: "Recrutador ativo", nao_fantasma: "Não é fantasma", conexoes: "Conexões",
+  responsividade: "Responsividade", recrutador_ativo: "Recrutador ativo", nao_fantasma: "Sinais de vaga fantasma", conexoes: "Conexões",
   reputacao: "Reputação", cultura: "Cultura", saude: "Saúde da empresa", remuneracao: "Remuneração", carreira: "Carreira",
   condicoes: "Condições", alinhamento: "Alinhamento",
 };

@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import os
 import re
-import shlex
-import shutil
 from datetime import UTC, datetime
 from typing import Any
 
+import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -19,12 +17,13 @@ from tracker.core import settings_store
 from tracker.core.config import get_settings
 from tracker.core.security import CurrentUser
 from tracker.integrations import telegram
-from tracker.integrations.claude.client import AIError, AIRequest, find_claude_code, get_ai, sessionmaker_from
+from tracker.integrations.claude.client import AIError, AIRequest, find_claude_code, get_ai, model_for, sessionmaker_from
 from tracker.integrations.google import oauth
 from tracker.modules.companies.models import Company
 from tracker.modules.jobs.models import SavedSearch
 from tracker.modules.notifications.telegram_bot import linked_chat
 from tracker.modules.profile import service as profile_service
+from tracker.modules.resumes.latex import find_latex_compiler
 
 router = APIRouter(prefix="/onboarding", tags=["onboarding"])
 
@@ -54,6 +53,31 @@ async def ai_check() -> dict[str, Any]:
     s = get_settings()
     if s.ai_fake:
         return {"ok": True, "backend": "fake", "detail": "IA simulada (AI_FAKE=true)"}
+    if s.ai_backend == "ollama":
+        model = model_for("onboarding.check")
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                response = await client.get(f"{s.ollama_base_url.rstrip('/')}/api/tags")
+                response.raise_for_status()
+        except httpx.TimeoutException:
+            return {"ok": False, "backend": "ollama", "detail": "Ollama não respondeu em 5 segundos"}
+        except httpx.HTTPStatusError as exc:
+            return {"ok": False, "backend": "ollama", "detail": f"Ollama respondeu HTTP {exc.response.status_code}"}
+        except httpx.RequestError:
+            return {
+                "ok": False,
+                "backend": "ollama",
+                "detail": f"Não conectou em {s.ollama_base_url}; inicie o container Ollama",
+            }
+        models = response.json().get("models", [])
+        names = {entry.get("name") for entry in models if isinstance(entry, dict)}
+        if model not in names:
+            return {
+                "ok": False,
+                "backend": "ollama",
+                "detail": f"Modelo {model} não encontrado; baixe-o com `ollama pull {model}`",
+            }
+        return {"ok": True, "backend": "ollama", "detail": f"Ollama conectado; modelo {model} disponível"}
     if s.ai_backend == "api" or (s.ai_backend == "auto" and s.anthropic_api_key):
         return {"ok": bool(s.anthropic_api_key), "backend": "api", "detail": "chave de API configurada"}
     cmd, version = await claude_code_version()
@@ -72,10 +96,14 @@ async def ai_check() -> dict[str, Any]:
 
 
 def latex_check() -> dict[str, Any]:
+    compiler = find_latex_compiler()
+    if compiler:
+        return {"ok": True, "detail": compiler.detail}
     cmd = get_settings().latex_cmd
-    exe = shlex.split(cmd, posix=os.name != "nt")[0] if cmd else "tectonic"
-    found = shutil.which(exe)
-    return {"ok": bool(found), "detail": found or f"`{exe}` não encontrado: instale para gerar os PDFs dos currículos"}
+    return {
+        "ok": False,
+        "detail": f"`{cmd or 'tectonic'}` não encontrado: instale tectonic no sistema ou no WSL2 padrão para gerar PDFs",
+    }
 
 
 @router.get("/status")

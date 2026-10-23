@@ -1,20 +1,154 @@
 from __future__ import annotations
 
 import hashlib
+import uuid
 
 from httpx import AsyncClient
 from sqlalchemy import select
 
 from tests import factories
 from tracker.core import settings_store
+from tracker.integrations import job_sources
 from tracker.integrations.claude.client import FakeAIClient
 from tracker.modules.applications.models import Application
 from tracker.modules.assistant import service
 from tracker.modules.jobs import service as job_service
+from tracker.modules.jobs.models import SavedSearch
 from tracker.modules.jobs.normalize import RawJob
+from tracker.modules.jobs.tasks import run_saved_search
 from tracker.modules.profile.models import AnswerBankEntry
 
 H = {"Authorization": "Extension tok"}
+
+
+async def test_only_selected_discoveries_enter_the_new_jobs_queue(client: AsyncClient, session) -> None:
+    first, _ = await job_service.upsert_job(
+        session,
+        RawJob(source="greenhouse", external_id="selection-1", title="Backend Engineer", company_name="Globex",
+               url="https://boards.greenhouse.io/globex/jobs/selection-1"),
+    )
+    second, _ = await job_service.upsert_job(
+        session,
+        RawJob(source="greenhouse", external_id="selection-2", title="Data Engineer", company_name="Globex",
+               url="https://boards.greenhouse.io/globex/jobs/selection-2"),
+    )
+    await session.commit()
+
+    response = await client.post("/api/v1/jobs/select", json={"job_ids": [str(first.id)]})
+
+    assert response.status_code == 200
+    assert response.json() == {"selected": 1}
+    await session.refresh(first)
+    await session.refresh(second)
+    assert first.triage == "new"
+    assert second.triage == "discovered"
+    repeated = await client.post("/api/v1/jobs/select", json={"job_ids": [str(first.id)]})
+    assert repeated.status_code == 409
+
+
+async def test_linkedin_scraping_endpoints_are_removed(anon_client: AsyncClient) -> None:
+    for method, path in (
+        ("GET", "/api/v1/assistant/discovery/due"),
+        ("GET", "/api/v1/assistant/discovery/status"),
+        ("POST", f"/api/v1/assistant/discovery/{uuid.uuid4()}/complete"),
+        ("POST", "/api/v1/assistant/import-list"),
+    ):
+        response = await anon_client.request(method, path, headers=H)
+        assert response.status_code == 404
+
+
+async def test_run_saved_search_returns_trackable_task(client: AsyncClient, session, dispatched) -> None:
+    search = SavedSearch(
+        name="Backend US",
+        query="backend Go",
+        filters={"country": "United States", "work_models": ["remote"]},
+        sources=["boards"],
+        schedule_cron="0 9 * * 1-5",
+        is_active=True,
+    )
+    session.add(search)
+    await session.commit()
+
+    response = await client.post(f"/api/v1/saved-searches/{search.id}/run")
+
+    assert response.status_code == 202
+    assert uuid.UUID(response.json()["task_id"])
+    assert dispatched[-1][0] == "ingest.run_saved_search"
+    assert dispatched[-1][1]["search_id"] == str(search.id)
+    assert "task_run_id" in dispatched[-1][1]
+
+
+async def test_saved_search_rejects_linkedin_source(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/saved-searches",
+        json={"name": "LinkedIn", "query": "backend", "sources": ["linkedin"]},
+    )
+
+    assert response.status_code == 422
+    assert "LinkedIn" in response.json()["error"]["message"]
+
+
+async def test_legacy_linkedin_only_search_cannot_be_run(client: AsyncClient, session) -> None:
+    search = SavedSearch(
+        name="Old LinkedIn search",
+        query="backend",
+        filters={},
+        sources=["linkedin"],
+        schedule_cron="0 9 * * 1-5",
+        is_active=True,
+    )
+    session.add(search)
+    await session.commit()
+
+    response = await client.post(f"/api/v1/saved-searches/{search.id}/run")
+
+    assert response.status_code == 409
+    assert "só tinha LinkedIn" in response.json()["error"]["message"]
+
+
+async def test_saved_search_accepts_and_runs_configured_ats_sources(
+    client: AsyncClient, session, sessionmaker, monkeypatch
+) -> None:
+    response = await client.post(
+        "/api/v1/saved-searches",
+        json={
+            "name": "Go at Globex",
+            "query": "Go",
+            "sources": ["boards"],
+            "schedule_cron": "0 9 * * 1-5",
+            "filters": {"custom_sources": [{"name": "Globex", "url": "https://boards.greenhouse.io/globex"}]},
+        },
+    )
+    assert response.status_code == 201
+    assert "custom" in response.json()["sources"]
+    assert response.json()["filters"]["custom_sources"] == [
+        {"name": "Globex", "url": "https://boards.greenhouse.io/globex"}
+    ]
+
+    search = await session.get(SavedSearch, uuid.UUID(response.json()["id"]))
+    assert search is not None
+    calls: list[tuple[str, str]] = []
+
+    async def fake_greenhouse(token: str, company_name: str) -> list[RawJob]:
+        calls.append((token, company_name))
+        return []
+
+    monkeypatch.setitem(job_sources.FETCHERS, "greenhouse", fake_greenhouse)
+    result = await run_saved_search(sessionmaker, str(search.id))
+    assert calls == [("globex", "Globex")]
+    assert result["custom_sources"]["0:Globex"] == {"seen": 0, "created": 0}
+
+
+async def test_saved_search_rejects_unsupported_custom_site(client: AsyncClient) -> None:
+    response = await client.post(
+        "/api/v1/saved-searches",
+        json={
+            "name": "Unsupported source",
+            "query": "Go",
+            "filters": {"custom_sources": [{"name": "Careers", "url": "https://careers.example.com/jobs"}]},
+        },
+    )
+    assert response.status_code == 422
 
 
 async def _auth(session) -> None:
@@ -217,33 +351,6 @@ async def test_analyze_reuses_same_site_job_with_different_company_name(
                                       "requirements_nice": [], "language": "pt"})  # fmt: skip
     r = await anon_client.post("/api/v1/assistant/analyze", headers=H, json={"url": "https://x.com/pagina", "text": "algo"})
     assert r.status_code == 422
-
-
-async def test_linkedin_list_import_then_enrich_on_open(anon_client: AsyncClient, session, ai: FakeAIClient, dispatched) -> None:
-    """Sem robô: a lista que você vê no LinkedIn vira vagas; ao abrir uma, a descrição completa a vaga."""
-    await _auth(session)
-    await factories.seed_master(session)
-    body = {"source": "linkedin", "jobs": [
-        {"external_id": "4011111111", "title": "Data Engineer", "company": "Initech", "location": "Brazil (Remote)", "easy_apply": True},
-        {"external_id": "4022222222", "title": "Backend Engineer", "company": "Hooli", "location": "São Paulo"},
-        {"external_id": "4033333333", "title": "", "company": "X"},  # incompleta: ignorada
-    ]}  # fmt: skip
-    r = await anon_client.post("/api/v1/assistant/import-list", headers=H, json=body)
-    assert r.json() == {"created": 2, "existing": 0}
-    assert [d for d in dispatched if d[0] == "ai.process_job"].__len__() == 2
-    r = await anon_client.post("/api/v1/assistant/import-list", headers=H, json=body)
-    assert r.json() == {"created": 0, "existing": 2}
-
-    page = {"url": "https://www.linkedin.com/jobs/view/4011111111/", "title": "Data Engineer | Initech",
-            "text": "Data Engineer · Initech. About the job. Responsibilities: build pipelines. Requirements: Python, Spark. " * 10}  # fmt: skip
-    r = await anon_client.post("/api/v1/assistant/page", headers=H, json=page)
-    assert r.json()["known"] is True and r.json()["needs_details"] is True
-    ai.on("job.extract", lambda req: {"title": "Data Engineer", "company_name": "Initech", "requirements_must": ["Python", "Spark"],
-                                      "requirements_nice": [], "language": "en", "work_model": "remote"})  # fmt: skip
-    r = await anon_client.post("/api/v1/assistant/analyze", headers=H, json=page)
-    assert r.status_code == 200 and r.json()["requirements"]["must"] == ["Python", "Spark"]
-    r = await anon_client.post("/api/v1/assistant/page", headers=H, json=page)
-    assert r.json()["needs_details"] is False  # completa: não pede de novo
 
 
 async def test_linkedin_alert_email_becomes_jobs_without_ai(session, ai: FakeAIClient, dispatched) -> None:

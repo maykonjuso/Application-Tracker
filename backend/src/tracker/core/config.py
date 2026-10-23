@@ -54,9 +54,11 @@ class Settings(BaseSettings):
     ai_monthly_budget_usd: float = 30.0
     ai_model_default: str = "claude-opus-5-5"
     ai_fake: bool = False
-    # "api" (ANTHROPIC_API_KEY), "claude_code" (CLI `claude -p` com a sua assinatura) ou "auto":
-    # usa a API se houver chave, senão o Claude Code instalado.
-    ai_backend: str = "auto"
+    # "api" (Anthropic), "claude_code", "ollama" (local) ou "auto".
+    ai_backend: Literal["auto", "api", "claude_code", "ollama"] = "auto"
+    ollama_base_url: str = "http://localhost:11434"
+    ollama_timeout_s: int = 900
+    agent_device_token: str | None = None
     # Tarefas em paralelo no worker (threads; o modelo de embeddings fica carregado uma vez só)
     worker_concurrency: int = 3
     claude_code_cmd: str = "claude"

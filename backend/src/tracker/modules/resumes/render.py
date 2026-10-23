@@ -20,6 +20,7 @@ from pypdf import PdfReader
 from tracker.core.config import REPO_ROOT
 from tracker.modules.profile.schemas import MasterProfile
 from tracker.modules.resumes.content import LABELS
+from tracker.modules.resumes.latex import find_latex_compiler
 from tracker.modules.resumes.schemas import ResumeContent
 
 TEMPLATES_DIR = REPO_ROOT / "templates" / "resumes"
@@ -109,27 +110,46 @@ class CompiledPdf:
 
 def compile_pdf(tex: str, template: str = "classic", timeout: int = 180) -> CompiledPdf:
     cmd = os.environ.get("LATEX_CMD", "tectonic")
-    exe = shlex.split(cmd, posix=os.name != "nt")[0]
-    if shutil.which(exe) is None:
-        raise RenderError(f"compilador LaTeX '{exe}' não encontrado (instale tectonic)")
+    compiler = find_latex_compiler(cmd)
+    if compiler is None:
+        exe = shlex.split(cmd, posix=os.name != "nt")[0] if cmd else "tectonic"
+        raise RenderError(f"compilador LaTeX '{exe}' não encontrado (instale tectonic no sistema ou no WSL2)")
     with tempfile.TemporaryDirectory(prefix="tracker-tex-") as tmp:
         tmpdir = Path(tmp)
         for f in (TEMPLATES_DIR / template).glob("*.sty"):
             shutil.copy(f, tmpdir / f.name)
         (tmpdir / "doc.tex").write_text(tex, encoding="utf-8")
-        if Path(exe).name == "tectonic":
-            args = [*shlex.split(cmd, posix=os.name != "nt"), "-X", "compile", "doc.tex"]
+        if compiler.tectonic:
+            args = [*compiler.command, "-X", "compile"]
+            cwd = tmpdir
+            if compiler.wsl:
+                path_result = subprocess.run(  # noqa: S603
+                    [compiler.command[0], "--exec", "wslpath", "-u", str(tmpdir)],
+                    capture_output=True,
+                    check=False,
+                    timeout=15,
+                    text=True,
+                    cwd=REPO_ROOT,
+                )
+                if path_result.returncode != 0 or not path_result.stdout.strip():
+                    raise RenderError(f"não consegui converter o diretório temporário para WSL2: {path_result.stderr[-1000:]}")
+                wsl_tmpdir = path_result.stdout.strip()
+                args.extend(["--outdir", wsl_tmpdir, f"{wsl_tmpdir}/doc.tex"])
+                cwd = REPO_ROOT
+            else:
+                args.append("doc.tex")
         else:
             args = [
-                *shlex.split(cmd, posix=os.name != "nt"),
+                *compiler.command,
                 "-no-shell-escape",
                 "-interaction=nonstopmode",
                 "-halt-on-error",
                 "doc.tex",
             ]
+            cwd = tmpdir
         proc = subprocess.run(  # noqa: S603
             args,
-            cwd=tmpdir,
+            cwd=cwd,
             capture_output=True,
             timeout=timeout,
             text=True,

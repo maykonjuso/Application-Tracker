@@ -92,11 +92,10 @@ Formato curto: contexto → decisão → consequências. Novas decisões são ad
 
 ### ADR-020 · Sem robô: candidatura com o assistente do navegador
 **Contexto:** o robô local (Playwright no LinkedIn) exigia login numa janela automatizada (o Google bloqueia), ficava parado sem tarefas e trazia risco à conta. A extensão já preenchia formulários na sessão real do usuário.
-**Decisão:** remover o robô por completo (`tracker-agent`, `agent_gateway`, fila `agent_job`, kill switch, limites do LinkedIn, comandos do Telegram ligados a ele). Vagas do LinkedIn entram por **alertas de vaga no Gmail** e por **importação da lista** na extensão; a descrição completa chega quando o usuário abre a vaga. A extensão passa a preencher sozinha ao detectar o formulário, completa perguntas abertas com IA a pedido e registra o envio.
-**Consequências:** zero automação de cliques e zero risco de bloqueio; o envio é sempre do usuário; migração `b2f1c0d7a913` remove as tabelas do robô.
+**Decisão:** remover o robô por completo (`tracker-agent`, `agent_gateway`, fila `agent_job`, kill switch, limites do LinkedIn, comandos do Telegram ligados a ele). Vagas do LinkedIn entram por **alertas de vaga no Gmail**; o usuário também pode abrir e avaliar manualmente uma vaga individual na extensão. A extensão não coleta listas nem resultados de busca. Ela auxilia no preenchimento e registra o envio, mas não envia candidaturas.
+**Consequências:** sem coleta de resultados de busca nem cliques automatizados; as ações na página são iniciadas pelo usuário; migração `b2f1c0d7a913` remove as tabelas do robô.
 
 ### ADR-021 · Endurecimento para uso local (revisão de segurança)
 **Contexto:** a revisão encontrou serviços escutando em todas as interfaces (Next, Postgres, Redis com senha padrão), login de desenvolvimento acessível pela rede, CORS aberto a qualquer extensão e o token da extensão chegando ao content script.
 **Decisão:** Postgres, Redis e o dashboard só em `127.0.0.1`; `TrustedHostMiddleware` (hosts de `APP_BASE_URL`/`API_BASE_URL` + `ALLOWED_HOSTS`); `dev-login` só de loopback e com Host local; sem CORS para extensões (o service worker usa permissão de host); `/assistant` aceita o cookie só fora de origens de extensão e com CSRF; token em `chrome.storage.local`, nunca entregue às páginas, e allowlist de endpoints no service worker; tarefas enviadas ao worker só depois do commit (`dispatch_after_commit`); `claude -p` com ambiente mínimo e PDF extraído localmente; Next 15.5.28.
 **Consequências:** acessar o app por outro host exige `ALLOWED_HOSTS`; API fora de localhost pede permissão de host na extensão.
-

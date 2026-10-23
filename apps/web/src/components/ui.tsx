@@ -324,11 +324,60 @@ export function Field({ label, children, hint }: { label: string; children: Reac
 export function Skeleton({ className }: { className?: string }) {
   return (
     <div
+      aria-hidden="true"
       className={cn(
         "animate-shimmer rounded-xl bg-[length:200%_100%] bg-gradient-to-r from-muted via-card to-muted",
         className,
       )}
     />
+  );
+}
+
+export function SkeletonText({ lines = 3, className }: { lines?: number; className?: string }) {
+  return (
+    <div aria-hidden="true" className={cn("space-y-2", className)}>
+      {Array.from({ length: lines }, (_, index) => (
+        <Skeleton key={index} className={cn("h-3", index === lines - 1 ? "w-2/3" : "w-full")} />
+      ))}
+    </div>
+  );
+}
+
+export function SkeletonCard({ className, lines = 2 }: { className?: string; lines?: number }) {
+  return (
+    <Card aria-hidden="true" className={cn("space-y-3", className)}>
+      <div className="flex items-center gap-3">
+        <Skeleton className="h-10 w-10 rounded-full" />
+        <div className="flex-1 space-y-2">
+          <Skeleton className="h-4 w-2/5" />
+          <Skeleton className="h-3 w-1/4" />
+        </div>
+      </div>
+      <SkeletonText lines={lines} />
+      <div className="flex gap-2">
+        <Skeleton className="h-7 w-20 rounded-lg" />
+        <Skeleton className="h-7 w-16 rounded-lg" />
+      </div>
+    </Card>
+  );
+}
+
+export function SkeletonList({
+  count = 3,
+  className,
+  cardClassName,
+  lines = 2,
+}: {
+  count?: number;
+  className?: string;
+  cardClassName?: string;
+  lines?: number;
+}) {
+  return (
+    <div role="status" aria-label="Carregando conteúdo" className={cn("grid gap-3", className)}>
+      <span className="sr-only">Carregando conteúdo</span>
+      {Array.from({ length: count }, (_, index) => <SkeletonCard key={index} className={cardClassName} lines={lines} />)}
+    </div>
   );
 }
 

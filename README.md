@@ -90,4 +90,4 @@ Produção/VPS: `docker compose -f infra/docker-compose.prod.yml --env-file .env
 
 ## Sem robô
 
-O app não automatiza cliques em nenhum site: as vagas do LinkedIn chegam pelos alertas no seu Gmail ou pela importação da lista que você está vendo, e a candidatura é feita por você, com a extensão preenchendo o formulário. Veja [docs/15-decisoes.md](docs/15-decisoes.md) (ADR-020).
+O app não automatiza cliques em nenhum site nem coleta resultados de busca do LinkedIn: as vagas chegam pelos alertas no seu Gmail, e você também pode analisar manualmente uma vaga individual aberta no navegador. A candidatura é feita por você, com a extensão preenchendo o formulário. Veja [docs/15-decisoes.md](docs/15-decisoes.md) (ADR-020).

@@ -4,7 +4,7 @@ import { CompanyLogo } from "@/components/brand";
 import { Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
-import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Select, Textarea } from "@/components/ui";
+import { Badge, Button, Card, EmptyState, Field, Input, Modal, PageHeader, Select, SkeletonList, Textarea } from "@/components/ui";
 import { useGet, useSend } from "@/lib/hooks";
 import { formatDate } from "@/lib/utils";
 
@@ -31,7 +31,7 @@ export default function PeoplePage() {
   const [q, setQ] = useState("");
   const [kind, setKind] = useState("");
   const params = new URLSearchParams({ ...(q && { q }), ...(kind && { kind }) });
-  const { data } = useGet<Person[]>(["people", params.toString()], `/api/v1/people?${params}`);
+  const { data, isLoading } = useGet<Person[]>(["people", params.toString()], `/api/v1/people?${params}`);
   const { data: companies } = useGet<Company[]>(["companies"], "/api/v1/companies");
   const [edit, setEdit] = useState<typeof empty & { id?: string } | null>(null);
   const inv = { invalidate: [["people"]] };
@@ -55,7 +55,7 @@ export default function PeoplePage() {
           {Object.entries(KIND).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
         </Select>
       </div>
-      {!data?.length ? (
+      {isLoading ? <SkeletonList count={6} className="md:grid-cols-2 xl:grid-cols-3" /> : !data?.length ? (
         <EmptyState title="Ninguém ainda">Pessoas citadas em e-mails e mensagens entram aqui automaticamente.</EmptyState>
       ) : (
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

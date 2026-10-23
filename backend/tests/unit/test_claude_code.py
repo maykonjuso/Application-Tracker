@@ -6,10 +6,14 @@ import base64
 import json
 import stat
 import sys
+from io import BytesIO
 from pathlib import Path
 
+import httpx
 import pytest
 from pydantic import BaseModel
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 from sqlalchemy import select
 
 from tracker.core.config import get_settings
@@ -99,6 +103,89 @@ async def test_error_is_recorded(sessionmaker, fake_cli: Path) -> None:
     assert row is not None and "boom" in (row.error or "")
 
 
+async def test_ollama_structured_output(sessionmaker) -> None:
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert body["model"] == "qwen2.5-coder:3b"
+        assert body["format"]["required"] == ["label", "n"]
+        assert body["messages"][-1]["content"] == "oi"
+        return httpx.Response(
+            200,
+            json={
+                "model": "qwen2.5-coder:3b",
+                "done_reason": "stop",
+                "prompt_eval_count": 12,
+                "eval_count": 8,
+                "message": {"role": "assistant", "content": '{"label":"ok","n":3}'},
+            },
+        )
+
+    client = ai.OllamaClient(sessionmaker, transport=httpx.MockTransport(respond))
+    result = await client.structured(
+        ai.AIRequest(task="email.classify", system="SYS", user="oi", model="qwen2.5-coder:3b"), Out
+    )
+    assert result.output == Out(label="ok", n=3) and result.cost_usd == 0.0
+    async with sessionmaker() as s:
+        row = await s.scalar(select(AiCall).where(AiCall.task == "email.classify"))
+    assert row is not None and row.model == "qwen2.5-coder:3b" and row.input_tokens == 12 and row.error is None
+
+
+async def test_ollama_extracts_text_from_pdf(sessionmaker) -> None:
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=612, height=792)
+    font = DictionaryObject(
+        {
+            NameObject("/Type"): NameObject("/Font"),
+            NameObject("/Subtype"): NameObject("/Type1"),
+            NameObject("/BaseFont"): NameObject("/Helvetica"),
+        }
+    )
+    resources = DictionaryObject(
+        {NameObject("/Font"): DictionaryObject({NameObject("/F1"): writer._add_object(font)})}
+    )
+    page[NameObject("/Resources")] = writer._add_object(resources)
+    content = DecodedStreamObject()
+    content.set_data(b"BT /F1 12 Tf 72 720 Td (Curriculo Qwen) Tj ET")
+    page[NameObject("/Contents")] = writer._add_object(content)
+    pdf = BytesIO()
+    writer.write(pdf)
+    encoded_pdf = base64.b64encode(pdf.getvalue()).decode()
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        assert "Curriculo Qwen" in body["messages"][-1]["content"]
+        return httpx.Response(200, json={"message": {"content": '{"label":"ok","n":3}'}, "done_reason": "stop"})
+
+    client = ai.OllamaClient(sessionmaker, transport=httpx.MockTransport(respond))
+    await client.structured(
+        ai.AIRequest(
+            task="profile.extract",
+            system="SYS",
+            user=[
+                {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": encoded_pdf}},
+                {"type": "text", "text": "Extraia o perfil."},
+            ],
+            model="qwen2.5-coder:3b",
+        ),
+        Out,
+    )
+
+
+def test_ollama_rejects_invalid_pdf_encoding() -> None:
+    with pytest.raises(ai.AIError, match="não foi possível extrair texto"):
+        ai.OllamaClient._text_content(
+            [{"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": "***"}}]
+        )
+
+
+async def test_ollama_rejects_unsupported_web_tools(sessionmaker) -> None:
+    client = ai.OllamaClient(sessionmaker, transport=httpx.MockTransport(lambda request: httpx.Response(500)))
+    with pytest.raises(ai.AIError, match="ferramentas web"):
+        await client.structured(
+            ai.AIRequest(task="company.profile", system="S", user="Empresa", tools=[ai.WEB_SEARCH_TOOL]), Out
+        )
+
+
 def test_backend_selection(sessionmaker, fake_cli: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     s = get_settings()
     monkeypatch.setattr(ai, "_override", None)  # o conftest instala um FakeAIClient global
@@ -109,3 +196,5 @@ def test_backend_selection(sessionmaker, fake_cli: Path, monkeypatch: pytest.Mon
     assert isinstance(ai.get_ai(sessionmaker), ai.ClaudeClient)  # auto com chave → API
     monkeypatch.setattr(s, "ai_backend", "claude_code")
     assert isinstance(ai.get_ai(sessionmaker), ai.ClaudeCodeClient)
+    monkeypatch.setattr(s, "ai_backend", "ollama")
+    assert isinstance(ai.get_ai(sessionmaker), ai.OllamaClient)

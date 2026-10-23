@@ -5,6 +5,7 @@
  */
 import {
   ArrowRight,
+  AlertTriangle,
   BarChart3,
   Check,
   ChevronDown,
@@ -12,6 +13,7 @@ import {
   FileText,
   Laptop,
   MapPin,
+  ShieldCheck,
   ThumbsDown,
   ThumbsUp,
   Wallet,
@@ -28,7 +30,15 @@ import { QUADRANT_LABEL, QUADRANT_TONE, SENIORITY_LABEL, STATUS_LABEL, WORK_MODE
 import { isApplied } from "@/lib/job-actions";
 import { cn, formatDate, relativeTime } from "@/lib/utils";
 
-type Detail = JobRow & { description_text: string; benefits: string[] };
+type QualityCheck = {
+  key: string;
+  label: string;
+  status: "ok" | "warning" | "risk" | "unknown";
+  detail: string;
+  scoreable: boolean;
+};
+type Quality = { score: number; summary: string; score_explanation: string; checks: QualityCheck[] };
+type Detail = JobRow & { description_text: string; benefits: string[]; quality?: Quality };
 
 
 function Section({ title, children, defaultOpen = true }: { title: string; children: React.ReactNode; defaultOpen?: boolean }) {
@@ -41,6 +51,61 @@ function Section({ title, children, defaultOpen = true }: { title: string; child
       </button>
       {open && <div className="mt-3">{children}</div>}
     </div>
+  );
+}
+
+function QualityCheckup({ quality }: { quality: Quality }) {
+  const attentionCount = quality.checks.filter((check) => check.status === "warning" || check.status === "risk").length;
+  return (
+    <Section title="Qualidade e integridade da informação">
+      <div className="rounded-xl border bg-muted/30 p-3">
+        <div className="flex items-center gap-3">
+          <div className={cn(
+            "grid h-11 w-11 shrink-0 place-items-center rounded-full text-xs font-bold",
+            quality.score >= 80 ? "bg-success/10 text-success" : quality.score >= 55 ? "bg-warning/10 text-warning" : "bg-danger/10 text-danger",
+          )}>
+            {quality.score}/100
+          </div>
+          <div className="min-w-0">
+            <p className="flex items-center gap-1.5 text-sm font-semibold">
+              {attentionCount > 0 ? <AlertTriangle size={15} className="text-warning" /> : <ShieldCheck size={15} className="text-success" />}
+              {quality.summary}
+            </p>
+            <p className="text-xs text-muted-foreground">{quality.score_explanation}</p>
+          </div>
+        </div>
+        <div className="mt-3 rounded-lg border border-warning/25 bg-warning/5 p-3 text-xs">
+          <p className="font-semibold">Como interpretar o sinal de vaga fantasma</p>
+          <p className="mt-1 text-muted-foreground">
+            “Vaga fantasma” é um anúncio que permanece publicado sem uma contratação real/ativa. O indicador abaixo não confirma
+            isso: ele só procura indícios indiretos. Considera 2 ou mais repostagens, anúncio com mais de 60 dias, descrição
+            marcada como genérica pela análise automática e informação de demissões recentes da empresa.
+          </p>
+          <p className="mt-1 text-muted-foreground">
+            “Nenhum fator conhecido reduziu a pontuação” quer dizer apenas que os dados disponíveis não cruzaram esses critérios.
+            Não é uma probabilidade nem comprova que a empresa esteja contratando; dados ausentes são mostrados como desconhecidos.
+          </p>
+        </div>
+        <ul className="mt-3 space-y-2">
+          {quality.checks.map((check) => (
+            <li key={check.key} className="flex items-start gap-2 text-xs">
+              {check.status === "ok" ? (
+                <Check size={14} className="mt-0.5 shrink-0 text-success" />
+              ) : (
+                <AlertTriangle size={14} className={cn(
+                  "mt-0.5 shrink-0",
+                  check.status === "risk" ? "text-danger" : check.status === "warning" ? "text-warning" : "text-muted-foreground",
+                )} />
+              )}
+              <span><b>{check.label}:</b> {check.detail}</span>
+            </li>
+          ))}
+        </ul>
+        <p className="mt-3 border-t pt-2 text-xs text-muted-foreground">
+          Confira a vaga no site oficial antes de compartilhar dados pessoais, documentos ou informações bancárias.
+        </p>
+      </div>
+    </Section>
   );
 }
 
@@ -91,7 +156,16 @@ function DrawerBody({ job, onClose }: { job: JobRow; onClose: () => void }) {
   const tailorTask = useTask();
   const fb = useSend<{ verdict: string }>("POST", `/api/v1/jobs/${job.id}/feedback`, { success: "Obrigado: isso ajusta as próximas notas" });
   const [opened, setOpened] = useState(false);
-  const link = j.apply_url || j.canonical_url;
+  const rawLink = j.apply_url || j.canonical_url;
+  const link = (() => {
+    if (!rawLink) return null;
+    try {
+      const parsed = new URL(rawLink);
+      return !parsed.username && !parsed.password && (parsed.protocol === "https:" || parsed.protocol === "http:") ? rawLink : null;
+    } catch {
+      return null;
+    }
+  })();
   const s = j.score;
   const status = j.application_status;
   const done = isApplied(status);
@@ -150,7 +224,9 @@ function DrawerBody({ job, onClose }: { job: JobRow; onClose: () => void }) {
                         <ExternalLink size={16} /> Abrir a vaga no site
                       </a>
                     ) : (
-                      <p className="mt-1 text-xs text-warning">Esta vaga não tem link. Procure pelo título no site da empresa.</p>
+                      <p className="mt-1 text-xs text-warning">
+                        {rawLink ? "Link bloqueado por segurança: use apenas um endereço HTTP ou HTTPS válido." : "Esta vaga não tem link. Procure pelo título no site da empresa."}
+                      </p>
                     )}
                     <p className="mt-1.5 text-xs text-muted-foreground">Com a extensão instalada, ela preenche o formulário para você. Quem clica em enviar é você.</p>
                   </div>
