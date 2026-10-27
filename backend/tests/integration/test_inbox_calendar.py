@@ -384,3 +384,55 @@ async def test_forged_email_never_acts_automatically(session, ai: FakeAIClient) 
     await session.refresh(app)
     assert app.status == "submitted" and row is not None and row.link_status == "ambiguous"
     assert row.extracted["sender_verified"] is False
+
+
+async def test_unknown_sender_ai_picks_recent_application_as_suggestion_only(session, ai: FakeAIClient) -> None:
+    """Sem pista de domínio/nome: a IA vê as candidaturas recentes e propõe, mas não associa sozinha."""
+    app, job, comp = await _app_for_globex(session)
+    ai.on("email.classify", lambda req: classification("rejeicao", app.id))
+    row = await inbox.process_email(
+        session,
+        ai,
+        email(
+            "talentos@recrutadora-x.com.br",
+            "Processo seletivo",
+            "Agradecemos sua candidatura. Infelizmente não seguiremos no processo seletivo.",
+        ),
+    )
+    await session.commit()
+    assert f"id={app.id}" in ai.calls[0].user  # a candidatura recente foi mostrada à IA
+    assert row.application_id is None and row.link_status == "ambiguous"
+    assert row.extracted["suggestion"]["kind"] == "link"
+    assert row.extracted["suggestion"]["application_id"] == str(app.id)
+    await session.refresh(app)
+    assert app.status == "submitted"  # nada mudou sem a sua confirmação
+
+
+async def test_create_application_from_email_outside_tracker(client: AsyncClient, session, ai: FakeAIClient) -> None:
+    await factories.seed_master(session)
+    ai.on("email.classify", lambda req: {**classification("rejeicao", company_name="iFood", job_title="Estágio iFuture")})
+    row = await inbox.process_email(
+        session,
+        ai,
+        email(
+            "no-reply@ifood.com.br",
+            "Feedback da sua participação",
+            "Obrigado pela sua candidatura. Infelizmente você não seguirá no processo seletivo.",
+        ),
+    )
+    await session.commit()
+    assert row.link_status == "ambiguous"
+    assert row.extracted["suggestion"] == {
+        "kind": "create",
+        "company": "iFood",
+        "job_title": "Estágio iFuture",
+        "confidence": 0.95,
+    }
+    r = await client.post(f"/api/v1/inbox/{row.id}/create-application")
+    assert r.status_code == 200, r.text
+    assert r.json()["link_status"] == "user" and r.json()["application_id"]
+    app = await session.get(Application, __import__("uuid").UUID(r.json()["application_id"]))
+    await session.refresh(app)
+    assert app.status == "rejected" and app.submitted_at is not None and app.applied_snapshot_id is not None
+    again = await client.post(f"/api/v1/inbox/{row.id}/create-application")
+    assert again.status_code == 409

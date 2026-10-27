@@ -188,6 +188,29 @@ function PrefsTab() {
       <Field label="Cidade e estado de nascimento" hint="ex.: Brasília, DF">
         <Input placeholder="Cidade, UF" value={String(p.birthplace ?? "")} onChange={(e) => setP({ ...p, birthplace: e.target.value || null })} />
       </Field>
+      <Field label="Identidade de gênero" hint="autodeclaração: só para formulários que perguntam; nunca vai para a IA nem para o CV">
+        <Input placeholder="ex.: Homem cisgênero" value={String(p.gender_identity ?? "")} onChange={(e) => setP({ ...p, gender_identity: e.target.value || null })} />
+      </Field>
+      <Field label="Orientação sexual">
+        <Input placeholder="ex.: Bissexual" value={String(p.sexual_orientation ?? "")} onChange={(e) => setP({ ...p, sexual_orientation: e.target.value || null })} />
+      </Field>
+      <Field label="Cor/raça (IBGE)">
+        <Input placeholder="ex.: Parda" value={String(p.race ?? "")} onChange={(e) => setP({ ...p, race: e.target.value || null })} />
+      </Field>
+      <Field label="Faz parte da comunidade LGBTQIAP+?">
+        <Select value={p.lgbtqia == null ? "" : p.lgbtqia ? "sim" : "nao"} onChange={(e) => setP({ ...p, lgbtqia: e.target.value === "" ? null : e.target.value === "sim" })}>
+          <option value="">Não responder (fica com você)</option>
+          <option value="sim">Sim</option>
+          <option value="nao">Não</option>
+        </Select>
+      </Field>
+      <Field label="Pessoa com deficiência (PcD)?">
+        <Select value={p.disability == null ? "" : p.disability ? "sim" : "nao"} onChange={(e) => setP({ ...p, disability: e.target.value === "" ? null : e.target.value === "sim" })}>
+          <option value="">Não responder (fica com você)</option>
+          <option value="sim">Sim</option>
+          <option value="nao">Não</option>
+        </Select>
+      </Field>
       <Field label="Aviso prévio (dias)"><Input type="number" value={String(p.notice_period_days ?? 30)} onChange={(e) => setP({ ...p, notice_period_days: Number(e.target.value) })} /></Field>
       <div className="flex flex-col gap-2 text-sm">
         <label className="flex gap-2"><input type="checkbox" checked={!!p.relocation} onChange={(e) => setP({ ...p, relocation: e.target.checked })} /> Aceito mudar de cidade</label>

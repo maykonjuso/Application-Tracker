@@ -257,3 +257,75 @@ async def test_linkedin_alert_email_becomes_jobs_without_ai(session, ai: FakeAIC
     titles = sorted(j.title for j in (await session.scalars(select(Job))).all())
     assert titles == ["Data Engineer", "Senior Analytics Engineer"]
     assert not [c for c in ai.calls if c.task == "email.classify"]  # alerta não gasta IA
+
+
+async def _fields(anon_client: AsyncClient, fields: list[dict]) -> dict:
+    r = await anon_client.post(
+        "/api/v1/assistant/fields", headers=H, json={"url": "https://x.com/f", "fields": fields, "allow_ai": False}
+    )
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+async def test_correction_overrides_profile_next_time(anon_client: AsyncClient, session) -> None:
+    """Você corrigiu um campo que veio do perfil: a próxima vaga já vem com a sua resposta."""
+    await _auth(session)
+    await factories.seed_master(session)
+    field = {"key": "a", "label": "Phone", "kind": "tel"}
+    before = (await _fields(anon_client, [field]))["values"]["a"]
+    assert before["source"] == "profile"
+    r = await anon_client.post(
+        "/api/v1/assistant/learn",
+        headers=H,
+        json={"items": [{"question": "Phone", "value": "+55 61 90000-0000", "corrected": True}]},
+    )
+    assert r.json()["saved"] == 1
+    after = (await _fields(anon_client, [field]))["values"]["a"]
+    assert after == {"value": "+55 61 90000-0000", "source": "bank", "confidence": 1.0}
+
+
+async def test_learn_skips_option_text_as_question(anon_client: AsyncClient, session) -> None:
+    await _auth(session)
+    r = await anon_client.post(
+        "/api/v1/assistant/learn",
+        headers=H,
+        json={
+            "items": [{"question": "Não", "value": "Não"}, {"question": "Parda", "value": "x", "options": ["Parda", "Branca"]}]
+        },
+    )
+    assert r.json()["saved"] == 0
+
+
+async def test_current_job_questions_and_consent(anon_client: AsyncClient, session) -> None:
+    await _auth(session)
+    await factories.seed_master(session)
+    await settings_store.put(
+        session,
+        "current_compensation",
+        {"company": "Sicoob", "regime": "CLT", "monthly_gross": 6000, "meal_monthly": 2100, "non_monetary": ["Plano de Saúde"]},
+    )
+    session.add(
+        AnswerBankEntry(canonical_question="Pretensão salarial", field_kind="text", answer={"value": "12000"}, source="user")
+    )
+    await session.commit()
+    out = await _fields(
+        anon_client,
+        [
+            {"key": "loc", "label": "Which city/state do you currently reside in? Qual cidade/estado reside atualmente?"},
+            {"key": "co", "label": "Confirme o nome da empresa em que você trabalha atualmente", "required": True},
+            {"key": "cur", "label": "Caso se sinta confortável, compartilhe seu salário atual ou ultimo e benefícios!", "required": True},
+            {"key": "cur_opt", "label": "If you feel comfortable, please share your current or last salary and benefits"},
+            {"key": "exp", "label": "Qual sua pretensão salarial para vagas CLT?", "required": True},
+            {"key": "ok", "label": "Concordo que meus dados pessoais sejam processados para fins de recrutamento e seleção.",
+             "kind": "checkbox", "required": True},
+            {"key": "mkt", "label": "Autorizo a empresa a enviar informações sobre novas oportunidades de emprego",
+             "kind": "checkbox"},
+        ],
+    )  # fmt: skip
+    v = {k: x["value"] for k, x in out["values"].items()}
+    assert v["co"] == "Sicoob"
+    assert v["cur"].startswith("CLT R$ 6.000 bruto/mês") and "12000" not in v["cur"]  # nunca a pretensão
+    assert "cur_opt" not in v  # opcional: em branco de propósito
+    assert v["exp"] == "12000"
+    assert v["ok"] is True and "mkt" not in v
+    assert "," in v["loc"]  # cidade + UF, não só a cidade

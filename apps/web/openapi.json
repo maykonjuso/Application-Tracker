@@ -2987,6 +2987,28 @@
     }
    }
   },
+  "/api/v1/jobs/discover": {
+   "post": {
+    "tags": [
+     "jobs"
+    ],
+    "summary": "Discover",
+    "description": "Busca agora as vagas de todas as empresas monitoradas (sem esperar o agendador).",
+    "operationId": "discover_api_v1_jobs_discover_post",
+    "responses": {
+     "202": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/TaskAccepted"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
   "/api/v1/jobs/{job_id}/feedback": {
    "post": {
     "tags": [
@@ -4647,6 +4669,50 @@
       }
      }
     },
+    "responses": {
+     "200": {
+      "description": "Successful Response",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/EmailOut"
+        }
+       }
+      }
+     },
+     "422": {
+      "description": "Validation Error",
+      "content": {
+       "application/json": {
+        "schema": {
+         "$ref": "#/components/schemas/HTTPValidationError"
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/v1/inbox/{email_id}/create-application": {
+   "post": {
+    "tags": [
+     "inbox"
+    ],
+    "summary": "Create Application",
+    "description": "Resposta de um processo feito fora do tracker: cria a candidatura e associa o e-mail.",
+    "operationId": "create_application_api_v1_inbox__email_id__create_application_post",
+    "parameters": [
+     {
+      "name": "email_id",
+      "in": "path",
+      "required": true,
+      "schema": {
+       "type": "string",
+       "format": "uuid",
+       "title": "Email Id"
+      }
+     }
+    ],
     "responses": {
      "200": {
       "description": "Successful Response",
@@ -12284,6 +12350,11 @@
       "pattern": "^(user|profile|bank|rule|ai)$",
       "title": "Source",
       "default": "user"
+     },
+     "corrected": {
+      "type": "boolean",
+      "title": "Corrected",
+      "default": false
      }
     },
     "type": "object",
@@ -13511,6 +13582,61 @@
        }
       ],
       "title": "Birthplace"
+     },
+     "gender_identity": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Gender Identity"
+     },
+     "sexual_orientation": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Sexual Orientation"
+     },
+     "race": {
+      "anyOf": [
+       {
+        "type": "string"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Race"
+     },
+     "lgbtqia": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Lgbtqia"
+     },
+     "disability": {
+      "anyOf": [
+       {
+        "type": "boolean"
+       },
+       {
+        "type": "null"
+       }
+      ],
+      "title": "Disability"
      }
     },
     "additionalProperties": true,

@@ -171,6 +171,12 @@ class PreferenceData(BaseModel):
     # dados pessoais que formulários pedem (preenchidos só a partir daqui, nunca pela IA)
     birth_date: str | None = None  # dd/mm/aaaa
     birthplace: str | None = None  # "Cidade, UF"
+    # autodeclaração (só preenche formulário quando perguntam; nunca vai para a IA nem para o CV)
+    gender_identity: str | None = None  # ex.: "Homem cisgênero"
+    sexual_orientation: str | None = None  # ex.: "Bissexual"
+    race: str | None = None  # ex.: "Parda"
+    lgbtqia: bool | None = None
+    disability: bool | None = None  # pessoa com deficiência (PcD)
 
 
 class AnswerIn(BaseModel):

@@ -230,6 +230,9 @@ def from_draft(master: MasterProfile, draft: ResumeDraft, lang: str) -> ResumeCo
                 bullets=d.bullets,
             )
         )
+    # a ordem das experiências é a do currículo mestre (a IA escolhe o texto, não a ordem)
+    rank = {e.id: i for i, e in enumerate(master.experience)}
+    exps.sort(key=lambda x: rank.get(x.experience_id, len(rank)))
     by_id = {p.id: p for p in master.projects}
     projects = [
         ProjBlock(

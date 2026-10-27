@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="pt"><head><meta charset="utf-8"><title>Engenheiro de Dados | Globex | LinkedIn</title>
+<style>.hidden{display:none!important}.modal{position:fixed;inset:40px;background:#fff;border:1px solid #ccc;padding:16px;overflow:auto}</style></head>
+<body>
+<!-- Imita o passo "Currículo" da candidatura simplificada do LinkedIn: o input de arquivo fica escondido
+     e o usuário clica num <label> estilizado como botão. Só para testes locais (nunca site real). -->
+<h1>Engenheiro de Dados</h1>
+<p>Globex · São Paulo · Remoto</p>
+<h2>Sobre a vaga</h2><p>Requisitos: Python, Spark, Kafka. Candidatura simplificada.</p>
+<button id="easy" class="jobs-apply-button">Candidatura simplificada</button>
+<div id="modal" class="modal hidden" role="dialog" aria-labelledby="ttl">
+  <h2 id="ttl">Candidatar-se à vaga na Globex</h2>
+  <div id="step1">
+    <h3>Informações de contato</h3>
+    <label for="email">Endereço de e-mail</label>
+    <select id="email"><option>Selecione</option><option>ana@example.com</option></select>
+    <label for="phone">Número de celular</label><input id="phone" type="text">
+    <button id="next">Avançar</button>
+  </div>
+  <div id="step2" class="hidden">
+    <h3>Currículo</h3>
+    <p>Certifique-se de incluir um currículo atualizado</p>
+    <div class="jobs-document-upload-redesign-card__container">
+      <input type="radio" id="old-cv" name="resume-choice" checked class="hidden">
+      <label for="old-cv"><h3>Ana_CV_antigo.pdf</h3><p>Último uso em 01/09/2026</p></label>
+    </div>
+    <div class="js-jobs-document-upload__container">
+      <label for="jobs-document-upload-file-input-upload-resume" class="artdeco-button"><span role="button">Carregar currículo</span></label>
+      <input id="jobs-document-upload-file-input-upload-resume" name="file" type="file" class="hidden" accept=".doc,.docx,.pdf">
+      <p>DOC, DOCX, PDF (2 MB)</p>
+    </div>
+    <button id="review">Revisar</button>
+  </div>
+</div>
+<script>
+  document.getElementById('easy').onclick = () => document.getElementById('modal').classList.remove('hidden');
+  document.getElementById('next').onclick = () => {
+    document.getElementById('step1').remove();  // o LinkedIn troca o conteúdo do modal a cada etapa
+    document.getElementById('step2').classList.remove('hidden');
+  };
+</script>
+</body></html>

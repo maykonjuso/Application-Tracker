@@ -142,7 +142,8 @@ async def test_extension_end_to_end(servers, session, tmp_path) -> None:
             assert await page.input_value("#eng") == "3"  # "Advanced" do perfil → opção "Avançado"
             assert await page.evaluate("document.getElementById('cv').files[0].name") == "Ana_Silva_Data_Engineer_EN.pdf"
             assert not await page.is_checked("#s-n")  # sensível: fica para o usuário
-            assert await page.input_value("#why") == ""  # pergunta aberta: só com IA, a pedido
+            # pergunta aberta: a IA já escreve sozinha depois do perfil (contorno azul, você revisa)
+            await page.wait_for_function("document.getElementById('why').value.length > 10", timeout=20000)
 
             # etapa seguinte: campo novo é preenchido assim que aparece
             await page.click("#next")
@@ -321,3 +322,76 @@ async def test_fields_labelled_by_nearby_text_not_placeholder(servers, session, 
             assert await panel.get_by_text("Enter", exact=True).count() == 0  # nenhum campo chamado "Enter"
         finally:
             await ctx.close()
+
+
+async def test_linkedin_easy_apply_attach_tailored_resume(servers, session, tmp_path) -> None:
+    """Easy Apply: input de arquivo escondido atrás do botão "Carregar currículo" num passo que aparece depois.
+    CV sob medida recém-gerado (rascunho) + um coringa já registrado na candidatura: "Aprovar e anexar"
+    aprova e anexa o PDF da vaga (não o coringa)."""
+    from tracker.core.storage import LocalStorage
+
+    m = await factories.seed_master(session)
+    await settings_store.put(session, "extension", {"token_sha256": hashlib.sha256(TOKEN.encode()).hexdigest()})
+    page_url = f"{servers['web']}/linkedin_easy_apply.html"
+    job, _ = await job_service.upsert_job(
+        session,
+        RawJob(source="browser", external_id="li-ea", title="Engenheiro de Dados", company_name="Globex", url=page_url,
+               description_text="Python Spark Kafka", apply_url=page_url, apply_kind="easy_apply"),
+    )  # fmt: skip
+    v = ResumeVariant(
+        kind="tailored",
+        job_id=job.id,
+        slug="globex-de",
+        name="Globex",
+        language="pt",
+        status="draft",
+        content=baseline(m, "data_engineer", "pt").model_dump(),
+        master_version=(await current_version(session)).version,
+        validation={"passed": True},
+    )
+    session.add(v)
+    await session.flush()
+    key = LocalStorage(servers["storage"]).put("resumes/t/Ana_Silva_Globex.pdf", b"%PDF-1.4 tailored")
+    session.add(ResumeRender(variant_id=v.id, storage_key=key, tex_source_key=key, filename="Ana_Silva_Globex.pdf", sha256="t"))
+    w = ResumeVariant(kind="wildcard", slug="de-pt", name="Coringa", language="pt", status="approved",
+                      content=baseline(m, "data_engineer", "pt").model_dump(),
+                      master_version=(await current_version(session)).version, validation={"passed": True})  # fmt: skip
+    session.add(w)
+    await session.flush()
+    wkey = LocalStorage(servers["storage"]).put("resumes/w/Ana_Coringa.pdf", b"%PDF-1.4 wildcard")
+    wr = ResumeRender(variant_id=w.id, storage_key=wkey, tex_source_key=wkey, filename="Ana_Coringa.pdf", sha256="w")
+    session.add(wr)
+    await session.flush()
+    session.add(Application(job_id=job.id, status="discovered", resume_render_id=wr.id))  # coringa escolhido antes
+    await session.commit()
+    async with async_playwright() as p:
+        ctx = await p.chromium.launch_persistent_context(
+            str(tmp_path / "profile-li"),
+            headless=False,
+            args=["--headless=new", f"--disable-extensions-except={EXT}", f"--load-extension={EXT}"],
+        )
+        try:
+            sw = ctx.service_workers[0] if ctx.service_workers else await ctx.wait_for_event("serviceworker")
+            await sw.evaluate(
+                "cfg => Promise.all([chrome.storage.sync.set(cfg.sync), chrome.storage.local.set({ token: cfg.token })])",
+                {"sync": {"apiUrl": servers["api"], "enabled": True, "ignoredDomains": [], "attachResume": False},
+                 "token": TOKEN},
+            )  # fmt: skip
+            page = await ctx.new_page()
+            await page.goto(page_url)
+            panel = page.locator("#tracker-assistant")
+            await panel.get_by_text("Aprovar e usar").wait_for(timeout=15000)  # sem campo de CV ainda
+            await page.click("#easy")
+            await page.click("#next")
+            approve = panel.get_by_text("Aprovar e anexar")
+            await approve.wait_for(timeout=15000)
+            await approve.click()
+            await page.wait_for_function(
+                "document.getElementById('jobs-document-upload-file-input-upload-resume').files[0]?.name === 'Ana_Silva_Globex.pdf'",
+                timeout=15000,
+            )
+            await panel.get_by_text("Anexar este CV no formulário").wait_for(timeout=5000)  # dá para reanexar depois
+        finally:
+            await ctx.close()
+    await session.refresh(v)
+    assert v.status == "approved"

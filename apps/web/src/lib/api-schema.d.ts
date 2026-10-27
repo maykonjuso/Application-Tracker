@@ -990,6 +990,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/jobs/discover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Discover
+         * @description Busca agora as vagas de todas as empresas monitoradas (sem esperar o agendador).
+         */
+        post: operations["discover_api_v1_jobs_discover_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/jobs/{job_id}/feedback": {
         parameters: {
             query?: never;
@@ -1555,6 +1575,26 @@ export interface paths {
         put?: never;
         /** Link */
         post: operations["link_api_v1_inbox__email_id__link_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/inbox/{email_id}/create-application": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Application
+         * @description Resposta de um processo feito fora do tracker: cria a candidatura e associa o e-mail.
+         */
+        post: operations["create_application_api_v1_inbox__email_id__create_application_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4198,6 +4238,11 @@ export interface components {
              * @default user
              */
             source: string;
+            /**
+             * Corrected
+             * @default false
+             */
+            corrected: boolean;
         };
         /** LinkedinIn */
         LinkedinIn: {
@@ -4667,6 +4712,16 @@ export interface components {
             birth_date?: string | null;
             /** Birthplace */
             birthplace?: string | null;
+            /** Gender Identity */
+            gender_identity?: string | null;
+            /** Sexual Orientation */
+            sexual_orientation?: string | null;
+            /** Race */
+            race?: string | null;
+            /** Lgbtqia */
+            lgbtqia?: boolean | null;
+            /** Disability */
+            disability?: boolean | null;
         } & {
             [key: string]: unknown;
         };
@@ -7416,6 +7471,26 @@ export interface operations {
             };
         };
     };
+    discover_api_v1_jobs_discover_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaskAccepted"];
+                };
+            };
+        };
+    };
     feedback_api_v1_jobs__job_id__feedback_post: {
         parameters: {
             query?: never;
@@ -8550,6 +8625,37 @@ export interface operations {
                 "application/json": components["schemas"]["tracker__modules__inbox__schemas__LinkIn"];
             };
         };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EmailOut"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_application_api_v1_inbox__email_id__create_application_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                email_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
         responses: {
             /** @description Successful Response */
             200: {

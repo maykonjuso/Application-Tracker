@@ -18,11 +18,12 @@ type Email = {
   received_at: string;
   classification: string | null;
   classification_confidence: number | null;
-  extracted: { summary?: string };
+  extracted: { summary?: string; company_name?: string | null; job_title?: string | null; suggestion?: Suggestion | null };
   application_id: string | null;
   link_status: string;
 };
 type Draft = { id: string; kind: string; application_id: string | null; to: string | null; subject: string | null; body: string; status: string; gmail_draft_id: string | null; created_at: string };
+type Suggestion = { kind: "link" | "create"; application_id?: string; company: string; job_title: string | null; confidence: number };
 type AppLite = { id: string; job_title: string; company_name: string };
 
 export default function InboxPage() {
@@ -56,6 +57,7 @@ function Emails() {
   const { data: apps } = useGet<AppLite[]>(["applications", "lite"], "/api/v1/applications?include_closed=false");
   const link = useSend<{ id: string; application_id: string }>("POST", (v) => `/api/v1/inbox/${v.id}/link`, { success: "Associado", invalidate: [["inbox"], ["applications"]] });
   const reclass = useSend<{ id: string; label: string }>("POST", (v) => `/api/v1/inbox/${v.id}/reclassify`, { success: "Rótulo corrigido", invalidate: [["inbox"]] });
+  const createApp = useSend<string>("POST", (id) => `/api/v1/inbox/${id}/create-application`, { success: "Candidatura criada e e-mail associado", invalidate: [["inbox"], ["applications"]] });
   return (
     <div className="space-y-3">
       <Select value={filter} onChange={(e) => setFilter(e.target.value)} className="max-w-56">
@@ -83,6 +85,7 @@ function Emails() {
             </div>
             <p className="text-xs text-muted-foreground">{e.from_name ?? ""} &lt;{e.from_addr}&gt; · {formatDateTime(e.received_at)}{e.classification_confidence != null ? ` · confiança ${Math.round(e.classification_confidence * 100)}%` : ""}</p>
             <p>{e.extracted.summary ?? e.snippet}</p>
+            {!e.application_id && <SuggestionBox e={e} onLink={(id) => link.mutate({ id: e.id, application_id: id })} onCreate={() => createApp.mutate(e.id)} busy={link.isPending || createApp.isPending} />}
             <div className="flex flex-wrap items-center gap-2">
               {e.application_id ? (
                 <Link className="text-xs text-primary underline" href={`/candidaturas/${e.application_id}`}>ver candidatura</Link>
@@ -100,6 +103,33 @@ function Emails() {
           </Card>
         ))
       )}
+    </div>
+  );
+}
+
+/** Proposta da IA para um e-mail que não foi associado sozinho: você confirma com um clique. */
+function SuggestionBox({ e, onLink, onCreate, busy }: { e: Email; onLink: (applicationId: string) => void; onCreate: () => void; busy: boolean }) {
+  const s = e.extracted.suggestion;
+  const company = s?.company ?? e.extracted.company_name;
+  if (s?.kind === "link" && s.application_id) {
+    const appId = s.application_id;
+    return (
+      <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2">
+        <span>
+          Parece ser da candidatura <strong>{s.company}</strong>{s.job_title ? ` · ${s.job_title}` : ""}
+          <span className="text-xs text-muted-foreground"> ({Math.round(s.confidence * 100)}%)</span>
+        </span>
+        <Button size="sm" disabled={busy} onClick={() => onLink(appId)}>Confirmar</Button>
+      </div>
+    );
+  }
+  if (e.link_status !== "ambiguous" || !company) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed px-3 py-2">
+      <span>
+        Não achei esta candidatura no tracker: <strong>{company}</strong>{(s?.job_title ?? e.extracted.job_title) ? ` · ${s?.job_title ?? e.extracted.job_title}` : ""}
+      </span>
+      <Button size="sm" variant="outline" disabled={busy} onClick={onCreate}>Criar candidatura</Button>
     </div>
   );
 }

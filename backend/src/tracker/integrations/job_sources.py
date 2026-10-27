@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 
 import httpx
 
-from tracker.modules.jobs.normalize import RawJob, html_to_text
+from tracker.modules.jobs.normalize import RawJob, html_to_text, parse_date
 
 UA = {"User-Agent": "ApplicationTracker/0.1 (uso pessoal)"}
 
@@ -18,14 +19,8 @@ def _client(transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncCli
 
 
 def _dt_ms(v: Any) -> datetime | None:
-    if v is None:
-        return None
-    if isinstance(v, int | float):
-        return datetime.fromtimestamp(v / 1000, UTC)
-    try:
-        return datetime.fromisoformat(str(v).replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    """Data da fonte → UTC. Aceita epoch (s ou ms), ISO, RFC 2822 (RSS) e texto relativo."""
+    return parse_date(v)
 
 
 async def greenhouse(token: str, company_name: str, transport: httpx.AsyncBaseTransport | None = None) -> list[RawJob]:
@@ -48,7 +43,7 @@ async def greenhouse(token: str, company_name: str, transport: httpx.AsyncBaseTr
                 location=(j.get("location") or {}).get("name"),
                 description_html=html_desc,
                 description_text=html_to_text(html_desc),
-                posted_at=_dt_ms(j.get("first_published") or j.get("updated_at")),
+                posted_at=_dt_ms(j.get("first_published")),
                 apply_url=j.get("absolute_url"),
                 apply_kind="external",
                 ats_kind="greenhouse",
@@ -196,7 +191,7 @@ async def gupy(subdomain: str, company_name: str, transport: httpx.AsyncBaseTran
                 url=url,
                 location=", ".join(filter(None, [city, state])) or None,
                 description_text=html_to_text(j.get("description") or ""),
-                posted_at=_dt_ms(j.get("publishedDate")),
+                posted_at=_dt_ms(j.get("publishedDate") or j.get("publishedAt")),
                 apply_url=url,
                 apply_kind="external",
                 ats_kind="gupy",
@@ -205,6 +200,57 @@ async def gupy(subdomain: str, company_name: str, transport: httpx.AsyncBaseTran
             )
         )
     return out
+
+
+async def gupy_job_detail(
+    subdomain: str, job_id: str, transport: httpx.AsyncBaseTransport | None = None
+) -> dict[str, Any] | None:
+    """Página da vaga na Gupy: a listagem não traz data nem descrição, a página traz."""
+    import json
+
+    async with _client(transport) as c:
+        r = await c.get(f"https://{subdomain}.gupy.io/jobs/{job_id}")
+        r.raise_for_status()
+    m = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', r.text, re.S)
+    if not m:
+        return None
+    job = json.loads(m.group(1)).get("props", {}).get("pageProps", {}).get("job")
+    return job if isinstance(job, dict) else None
+
+
+GUPY_SECTIONS = (
+    ("description", ""),
+    ("responsibilities", "Responsabilidades e atribuições"),
+    ("prerequisites", "Requisitos e qualificações"),
+    ("relevantExperiences", "Diferenciais"),
+)
+
+
+async def gupy_enrich(
+    subdomain: str,
+    raws: list[RawJob],
+    transport: httpx.AsyncBaseTransport | None = None,
+    concurrency: int = 4,
+) -> int:
+    """Completa data de publicação e descrição das vagas Gupy (uma página por vaga). Devolve quantas completou."""
+    sem = asyncio.Semaphore(concurrency)
+
+    async def one(raw: RawJob) -> bool:
+        async with sem:
+            try:
+                job = await gupy_job_detail(subdomain, raw.external_id, transport)
+            except (httpx.HTTPError, ValueError):
+                return False  # sem a página, a vaga entra mesmo assim (data = quando a encontramos)
+        if not job:
+            return False
+        raw.posted_at = raw.posted_at or _dt_ms(job.get("publishedAt"))
+        parts = [f"<h3>{title}</h3>{job[k]}" if title else str(job[k]) for k, title in GUPY_SECTIONS if job.get(k)]
+        if parts and not raw.description_text:
+            raw.description_html = "\n".join(parts)
+            raw.description_text = html_to_text(raw.description_html)
+        return True
+
+    return sum(await asyncio.gather(*(one(r) for r in raws)))
 
 
 FETCHERS = {"greenhouse": greenhouse, "lever": lever, "ashby": ashby, "gupy": gupy}
@@ -348,7 +394,7 @@ async def board_remoteok(query: str, transport: httpx.AsyncBaseTransport | None 
                 location=j.get("location"),
                 description_html=j.get("description"),
                 description_text=html_to_text(j.get("description") or ""),
-                posted_at=_dt_ms(j.get("date")),
+                posted_at=_dt_ms(j.get("date") or j.get("epoch")),
                 apply_url=j.get("apply_url") or j.get("url"),
                 apply_kind="external",
                 work_model="remote",
@@ -381,7 +427,7 @@ async def board_himalayas(query: str, transport: httpx.AsyncBaseTransport | None
                 location=", ".join(j.get("locationRestrictions") or []) or "Remote",
                 description_html=j.get("description"),
                 description_text=html_to_text(j.get("description") or j.get("excerpt") or ""),
-                posted_at=_dt_ms((j.get("pubDate") or 0) * 1000 if isinstance(j.get("pubDate"), int) else j.get("pubDate")),
+                posted_at=_dt_ms(j.get("pubDate")),
                 apply_url=j.get("applicationLink"),
                 apply_kind="external",
                 work_model="remote",
@@ -435,7 +481,7 @@ async def board_arbeitnow(query: str, transport: httpx.AsyncBaseTransport | None
             location=j.get("location"),
             description_html=j.get("description"),
             description_text=html_to_text(j.get("description") or ""),
-            posted_at=_dt_ms(j["created_at"] * 1000) if j.get("created_at") else None,
+            posted_at=_dt_ms(j.get("created_at")),
             apply_url=j["url"],
             apply_kind="external",
             work_model="remote" if j.get("remote") else None,

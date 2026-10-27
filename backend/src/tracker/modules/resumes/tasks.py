@@ -22,6 +22,7 @@ from tracker.workers.celery_app import celery_app
 from tracker.workers.runtime import SM, progress, tracked
 
 LANG_NAMES = {"en": "inglês", "pt": "português do Brasil"}
+PROMPT_VERSION = "v2"  # v2: impacto primeiro, texto do mestre no idioma de saída (bullets_pt/bullets_en)
 
 
 def master_context(master: MasterProfile) -> str:
@@ -39,7 +40,7 @@ async def generate_draft(
     effort: str = "high",
 ) -> tuple[ResumeContent, ResumeDraft]:
     """Gera rascunho, monta e valida; uma nova tentativa recebe as violações (docs/08 §5)."""
-    prompt = load_prompt(task)
+    prompt = load_prompt(task, PROMPT_VERSION)
     user = f"Idioma de saída: {LANG_NAMES[lang]}.\n\n{instructions}"
     for attempt in range(2):
         res = await ai.structured(
@@ -51,7 +52,7 @@ async def generate_draft(
                 effort=effort,  # type: ignore[arg-type]
                 entity_type=entity_type,
                 entity_id=entity_id,
-                prompt_version="v1",
+                prompt_version=PROMPT_VERSION,
             ),
             ResumeDraft,
         )

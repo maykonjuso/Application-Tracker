@@ -1,6 +1,6 @@
 const D = globalThis.TRACKER_DEFAULTS;
 const $ = (id) => document.getElementById(id);
-const SWITCHES = ["enabled", "autoFill", "attachResume", "highlight", "suggestOnFocus", "autoAnalyze", "autoRegister", "startMinimized"];
+const SWITCHES = ["enabled", "autoFill", "autoAi", "attachResume", "highlight", "suggestOnFocus", "autoAnalyze", "autoRegister", "startMinimized"];
 let sites = [];
 
 function renderSites() {

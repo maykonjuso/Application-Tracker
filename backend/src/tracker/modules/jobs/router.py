@@ -221,6 +221,13 @@ async def import_job(body: JobImportIn, session: SessionDep, _user: CurrentUser)
     return TaskAccepted(task_id=tr.id)
 
 
+@router.post("/discover", response_model=TaskAccepted, status_code=202)
+async def discover(session: SessionDep, _user: CurrentUser) -> TaskAccepted:
+    """Busca agora as vagas de todas as empresas monitoradas (sem esperar o agendador)."""
+    tr = await enqueue(session, "ingest.discover_monitored")
+    return TaskAccepted(task_id=tr.id)
+
+
 @router.post("/{job_id}/feedback", status_code=204)
 async def feedback(job_id: uuid.UUID, body: FeedbackIn, session: SessionDep, _user: CurrentUser) -> Response:
     await get_or_404(session, Job, job_id)

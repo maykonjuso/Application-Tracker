@@ -119,3 +119,37 @@ def test_render_compiles_pdf_with_special_chars() -> None:
     report = ats.check(pdf.text, m, "pt", ["Python", "Kafka"])
     assert report.ok, [ch for ch in report.checks if not ch.ok]
     assert report.keyword_coverage == 1.0
+
+
+def test_from_draft_keeps_master_experience_order() -> None:
+    """A IA escolhe o texto; a ordem das experiências é sempre a do mestre."""
+    from tracker.modules.resumes.schemas import DraftExperience, ResumeDraft
+
+    m = master()
+    ids = [e.id for e in m.experience]
+    assert len(ids) >= 2
+    draft = ResumeDraft(
+        headline="h",
+        summary="s",
+        skill_rows=[],
+        experiences=[DraftExperience(experience_id=i, title=m.experience_by_id(i).title, bullets=["x"]) for i in reversed(ids)],
+        project_ids=[],
+        used_facts=[],
+        changes=[],
+    )
+    out = content.from_draft(m, draft, "en")
+    assert [e.experience_id for e in out.experience] == ids
+
+
+def test_render_keeps_master_order_and_localizes_pt() -> None:
+    """CVs salvos com outra ordem saem na ordem do mestre; em português, "Brasil" e "aberto a remoto"."""
+    m = master()
+    m.contact.location = "Brasília, DF, Brazil"
+    m.contact.remote = "Open to Remote"
+    c = content.baseline(m, "data_engineer", "pt")
+    titles = [e.title for e in c.experience]
+    c.experience = list(reversed(c.experience))
+    tex = render.render_tex(c, m)
+    pos = [tex.find(render.tex_escape(t)) for t in titles]
+    assert all(p >= 0 for p in pos) and pos == sorted(pos)
+    assert "Brasília, DF, Brasil" in tex and "aberto a remoto" in tex and "Brazil" not in tex

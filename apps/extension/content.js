@@ -232,7 +232,7 @@
       const key = keyOf(el);
       els.set(key, el);
       const options = kind === "select" ? [...el.options].filter((o) => o.value && !/^(select|selecione|escolha|--)/i.test(o.text.trim())).map((o) => o.text.trim()) : [];
-      out.push({ key, label: label.slice(0, 300), kind, options, required: el.required || el.getAttribute("aria-required") === "true",
+      out.push({ key, label: label.slice(0, 300), kind, options, required: el.required || el.getAttribute("aria-required") === "true", max_length: maxLen(el),
         current_value: kind === "checkbox" ? String(el.checked) : kind === "select" ? (el.value ? el.options[el.selectedIndex]?.text?.trim() : null) : kind === "file" ? (el.files?.length ? el.files[0].name : null) : el.value || null });
     });
     return out;
@@ -361,17 +361,29 @@
     return !el.value;
   };
 
+  /** Limite de caracteres do campo: atributo maxlength ou o contador do site ("0 / 1.500 caracteres"). */
+  function maxLen(el) {
+    if (el.maxLength > 0 && el.maxLength < 100000) return el.maxLength;
+    if (!/^(TEXTAREA|INPUT)$/.test(el.tagName)) return null;
+    let node = el.parentElement;
+    for (let i = 0; i < 3 && node; i++, node = node.parentElement) {
+      const m = (node.innerText || "").match(/\/\s*([\d.,]{2,7})\s*(caracteres|characters|chars)/i);
+      if (m) return Number(m[1].replace(/[.,]/g, "")) || null;
+    }
+    return null;
+  }
+
   // ---------------- preenchimento ----------------
   // status por campo: filled (verde) | ai (azul, revisar) | user (você) | suggestion (laranja) | sensitive | empty
   async function fillFields(fields, allowAi) {
     if (!fields.length) return { filled: 0, ai: 0 };
     const epoch = state.epoch;
     const res = await api("POST", "/fields", { url: location.href, job_id: jobId(), fields, allow_ai: allowAi });
-    if (epoch !== state.epoch) return { filled: 0, ai: 0 }; // a página mudou enquanto a API respondia
+    if (epoch !== state.epoch) return { filled: 0, ai: 0, open: [] }; // a página mudou enquanto a API respondia
     const before = document.activeElement;
     state.filling = true; // ignora os eventos causados pelo próprio preenchimento (sem bolha, sem aprender)
     try {
-      return await applyResults(fields, res, allowAi);
+      return { ...(await applyResults(fields, res, allowAi)), open: res.open || [] };
     } finally {
       // devolve o foco para onde você estava; se não estava num campo, não deixa nenhum focado
       if (before && before !== document.body && before.isConnected) before.focus({ preventScroll: true });
@@ -418,9 +430,16 @@
     state.busy = true;
     render("Preenchendo com o seu perfil…");
     try {
-      const { filled } = await fillFields(todo, false);
+      const { filled, open } = await fillFields(todo, false);
       state.failures = 0;
       state.msg = filled ? `${filled} campo(s) preenchido(s) automaticamente. Confira antes de enviar.` : manual ? "Nada novo para preencher com o que eu sei." : "";
+      // perguntas abertas ("fale sobre você", "por que esta vaga"): a IA já escreve, você revisa (contorno azul)
+      const openFields = state.cfg?.autoAi === false ? [] : todo.filter((f) => open.includes(f.key) && isEmpty(f));
+      if (openFields.length && active()) {
+        render(`A IA está escrevendo ${openFields.length} resposta(s) aberta(s)… (pode levar até 1 minuto)`);
+        const r = await fillFields(openFields, true);
+        if (r.ai) state.msg = `${filled} campo(s) preenchido(s) automaticamente e ✨ ${r.ai} resposta(s) escritas pela IA (contorno azul). Leia antes de enviar.`;
+      }
     } catch (e) { state.failures++; state.msg = `Não consegui preencher: ${e.message}`; }
     state.busy = false;
     render();
@@ -796,12 +815,14 @@
       html += `<div class="muted bad">A IA citou algo que não está no seu currículo: corrija no tracker ou gere de novo.</div>
         <div class="btns" style="margin-top:8px"><button class="b b2 grow" id="tailorEdit">Corrigir no tracker</button><button class="b b2" id="tailor">Gerar de novo</button></div>`;
     } else if (t.status !== "approved") {
+      // com campo de currículo na tela, aprovar já anexa (um clique só, inclusive no Easy Apply do LinkedIn)
+      const main = cvField() ? `${ICON.check} Aprovar e anexar` : `${ICON.check} Aprovar e usar`;
       html += `<div class="muted">Pronto! Revise e aprove: depois disso ele é o CV anexado nesta vaga.</div>
-        <div class="btns" style="margin-top:8px"><button class="b b1 grow" id="tailorApprove">${ICON.check} Aprovar e usar</button>${t.has_pdf ? '<button class="b b2" id="tailorView">Ver PDF</button>' : ""}<button class="b b3" id="tailor" title="Gerar outra versão">${ICON.refresh}</button></div>`;
+        <div class="btns" style="margin-top:8px"><button class="b b1 grow" id="tailorApprove">${main}</button>${t.has_pdf ? '<button class="b b2" id="tailorView">Ver PDF</button>' : ""}<button class="b b3" id="tailor" title="Gerar outra versão">${ICON.refresh}</button></div>`;
     } else {
-      const fileField = state.fields.find((f) => f.kind === "file" && CV_LABEL.test(f.label));
-      html += `<div class="muted ok">${ICON.check} Aprovado: é o CV anexado nesta vaga${t.filename ? ` (${esc(t.filename)})` : ""}.</div>
-        <div class="btns" style="margin-top:8px">${fileField ? '<button class="b b2 grow" id="tailorAttach">Anexar este CV no formulário</button>' : ""}${t.has_pdf ? '<button class="b b2" id="tailorView">Ver PDF</button>' : ""}<button class="b b3" id="tailor" title="Gerar outra versão">${ICON.refresh}</button></div>`;
+      const hint = cvField() ? "" : `<div class="muted" style="margin-top:4px">Na candidatura simplificada do LinkedIn, avance até o passo “Currículo” e clique em anexar.</div>`;
+      html += `<div class="muted ok">${ICON.check} Aprovado: é o CV anexado nesta vaga${t.filename ? ` (${esc(t.filename)})` : ""}.</div>${hint}
+        <div class="btns" style="margin-top:8px"><button class="b b1 grow" id="tailorAttach">Anexar este CV no formulário</button>${t.has_pdf ? '<button class="b b2" id="tailorView">Ver PDF</button>' : ""}<button class="b b3" id="tailor" title="Gerar outra versão">${ICON.refresh}</button></div>`;
     }
     return html + "</div>";
   }
@@ -845,13 +866,20 @@
       state.card = { ...state.card, tailored: r.tailored };
       state.msg = "✓ Aprovado: este CV será anexado nesta vaga.";
       render();
+      if (cvField()) await reattachResume(); // o formulário já pede o currículo: anexa agora
     } catch (e) { say(e.message); }
+  }
+  /** Campo do currículo: o rotulado como CV, ou o único campo de arquivo da etapa atual. */
+  function cvField() {
+    const files = state.fields.filter((f) => f.kind === "file");
+    return files.find((f) => CV_LABEL.test(f.label)) || (files.length === 1 ? files[0] : null);
   }
   /** Troca o arquivo já anexado pelo CV aprovado da vaga. */
   async function reattachResume() {
-    const f = state.fields.find((x) => x.kind === "file" && CV_LABEL.test(x.label));
+    state.fields = extractFields(); // a etapa do formulário pode ter mudado desde a última leitura
+    const f = cvField();
     const el = f && byKey(f.key);
-    if (!el) return say("Não achei o campo de currículo nesta página.");
+    if (!el) return say("Não achei o campo de currículo nesta tela. No LinkedIn, avance até o passo “Currículo” e clique de novo.");
     state.filling = true;
     try {
       el.value = "";
@@ -1002,8 +1030,13 @@
     }
     const key = keys.get(el);
     if (label && value !== null && value !== "" && value !== undefined) {
-      state.edits.set(label, { question: label.slice(0, 500), value, field_kind: kind, options: options.slice(0, 50), source: "user" });
+      const prev = key ? state.status.get(key) : null;
+      // corrigiu o que o assistente tinha posto: na próxima vez a sua resposta vem primeiro
+      const corrected = !!(prev?.auto && prev.value != null && String(prev.value) !== String(value));
+      const item = { question: label.slice(0, 500), value, field_kind: kind, options: options.slice(0, 50), source: "user", corrected };
+      state.edits.set(label, item);
       tab.set({ answers: answers() });
+      queueLearn(item);
     }
     if (key && state.status.has(key)) {
       const st = state.status.get(key);
@@ -1014,6 +1047,28 @@
     }
   }
   let renderTimer;
+  // cada resposta sua vai para o banco na hora (não depende de detectarmos o envio do formulário)
+  const learnQueue = new Map();
+  let learnTimer;
+  function queueLearn(item) {
+    const k = item.question;
+    const before = learnQueue.get(k);
+    learnQueue.set(k, { ...item, corrected: item.corrected || !!before?.corrected });
+    clearTimeout(learnTimer);
+    learnTimer = setTimeout(flushLearn, 1500);
+  }
+  async function flushLearn() {
+    if (!learnQueue.size) return;
+    const items = [...learnQueue.values()];
+    learnQueue.clear();
+    try {
+      const r = await api("POST", "/learn", { items });
+      if (r?.saved && items.some((i) => i.corrected)) say("✓ Correção salva: da próxima vez já respondo assim.");
+    } catch {
+      for (const i of items) if (!learnQueue.has(i.question)) learnQueue.set(i.question, i); // tenta de novo na próxima edição
+    }
+  }
+  window.addEventListener("pagehide", () => { if (learnQueue.size) flushLearn(); });
   /** Respostas desta candidatura: o que o assistente preencheu (com a origem) + o que você digitou. */
   function answers() {
     const out = new Map();

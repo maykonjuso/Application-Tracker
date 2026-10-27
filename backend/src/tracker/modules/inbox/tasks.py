@@ -56,6 +56,14 @@ async def gmail_sync(sm: SM, gmail: Gmail | None = None) -> dict[str, Any]:
             try:
                 gmail = Gmail(await oauth.get_access_token(s))
             except oauth.OAuthError as exc:
+                # token vencido/revogado: sem isso o Gmail para em silêncio e os alertas do LinkedIn somem
+                st = await _state(s)
+                first = not st.consecutive_errors
+                st.last_error_at, st.last_error = datetime.now(UTC), str(exc)[:500]
+                st.consecutive_errors = (st.consecutive_errors or 0) + 1
+                if first:
+                    await notify(s, "integration_error", {"message": f"Gmail parado: {str(exc)[:200]}"})
+                await s.commit()
                 return {"skipped": str(exc)}
             await s.commit()
         st = await _state(s)

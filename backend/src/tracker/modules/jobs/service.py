@@ -9,6 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tracker.core import events
+from tracker.core.tasks import dispatch_after_commit
 from tracker.integrations.embeddings import cosine, embed_one
 from tracker.modules.companies import service as companies
 from tracker.modules.jobs import normalize as nz
@@ -49,6 +50,24 @@ async def snapshot(session: AsyncSession, job: Job, reason: str, html: str | Non
     return snap
 
 
+def posted_at_of(raw: nz.RawJob, text: str, now: datetime) -> datetime | None:
+    """Data da fonte; sem ela, a que aparece no anúncio ("há 3 dias", "Publicada em 12/10/2026")."""
+    return nz.parse_date(raw.posted_at, now) or nz.find_posted_at(f"{raw.title}\n{text}", now)
+
+
+async def _fill_missing(session: AsyncSession, job: Job, raw: nz.RawJob, now: datetime) -> None:
+    """Vaga já conhecida: completa o que faltava (data de publicação, descrição vazia). Não reescreve nada."""
+    text = raw.description_text or nz.html_to_text(raw.description_html or "")
+    if job.posted_at is None:
+        job.posted_at = posted_at_of(raw, text, now)
+    if len(job.description_text or "") < 50 and len(text) > len(job.description_text or ""):
+        job.description_text = text
+        job.embedding = embed_one(job_text_for_embedding(job.title, text))
+        job.extra = {**(job.extra or {}), "needs_extraction": True}
+        await snapshot(session, job, "collected", raw.description_html)
+        dispatch_after_commit(session, "ai.process_job", job_id=str(job.id))
+
+
 async def upsert_job(session: AsyncSession, raw: nz.RawJob, saved_search_id: object = None) -> tuple[Job, bool]:
     """Retorna (vaga canônica, criada?)."""
     now = datetime.now(UTC)
@@ -60,6 +79,7 @@ async def upsert_job(session: AsyncSession, raw: nz.RawJob, saved_search_id: obj
         src.seen_at = now
         if raw.applicants_count is not None:
             job.applicants_count = raw.applicants_count
+        await _fill_missing(session, job, raw, now)
         if job.status == "closed":
             job.status = "open"
         return job, False
@@ -90,6 +110,7 @@ async def upsert_job(session: AsyncSession, raw: nz.RawJob, saved_search_id: obj
             cand.last_seen_at = now
             if cand.status == "closed":
                 cand.status = "open"
+            await _fill_missing(session, cand, raw, now)
             await session.flush()
             return cand, False
 
@@ -111,7 +132,7 @@ async def upsert_job(session: AsyncSession, raw: nz.RawJob, saved_search_id: obj
         apply_kind=apply_kind or "unknown",
         ats_kind=ats_kind or raw.ats_kind,
         apply_url=raw.apply_url or raw.url,
-        posted_at=raw.posted_at,
+        posted_at=posted_at_of(raw, text, now),
         applicants_count=raw.applicants_count,
         canonical_url=raw.url,
         description_text=text,

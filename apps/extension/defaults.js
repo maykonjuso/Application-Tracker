@@ -6,6 +6,7 @@ globalThis.TRACKER_DEFAULTS = {
   enabled: true, // liga/desliga geral
   pausedUntil: 0, // pausa temporária (timestamp em ms); 0 = sem pausa
   autoFill: true, // preenche sozinho quando um formulário de candidatura aparece
+  autoAi: true, // depois do preenchimento, a IA escreve as perguntas abertas (você revisa; nada é enviado)
   attachResume: true, // anexa o PDF do CV escolhido para a vaga nos campos de arquivo
   highlight: true, // contornos coloridos nos campos preenchidos (verde perfil · azul IA · laranja você)
   panelMode: "auto", // auto: vagas e formulários · forms: só formulários · manual: só pelo ícone/atalho

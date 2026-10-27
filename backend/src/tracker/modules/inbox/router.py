@@ -76,6 +76,17 @@ async def link(email_id: uuid.UUID, body: LinkIn, session: SessionDep, _user: Cu
     return e
 
 
+@router.post("/{email_id}/create-application", response_model=EmailOut)
+async def create_application(email_id: uuid.UUID, session: SessionDep, _user: CurrentUser) -> EmailMessage:
+    """Resposta de um processo feito fora do tracker: cria a candidatura e associa o e-mail."""
+    e = await get_or_404(session, EmailMessage, email_id)
+    if e.application_id:
+        raise HTTPException(409, "este e-mail já está associado a uma candidatura")
+    await service.create_application_from_email(session, e)
+    await session.commit()
+    return e
+
+
 @router.post("/{email_id}/reclassify", response_model=EmailOut)
 async def reclassify(email_id: uuid.UUID, body: ReclassifyIn, session: SessionDep, _user: CurrentUser) -> EmailMessage:
     """Correção manual: vira exemplo rotulado para os evals (docs/13 §5)."""

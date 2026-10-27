@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -9,7 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from tracker.core import settings_store
 from tracker.core.tasks import dispatch
@@ -127,6 +128,8 @@ async def poll_company(sm: SM, company_id: str) -> dict[str, Any]:
         international = (await profile_service.get_preferences(s)).international
     # sem IA: só vagas dos seus cargos-alvo, sem estágio/gestão e que dá para fazer do Brasil
     relevant = relevance.filter_relevant(raws, terms, brazilian, international)
+    if ats == "gupy":
+        await _gupy_details(sm, token, relevant)
     result = await ingest_raw(sm, relevant)
     result["fetched"] = len(raws)
     async with sm() as s:
@@ -152,6 +155,79 @@ async def poll_company(sm: SM, company_id: str) -> dict[str, Any]:
                 job.status = "closed"
         await s.commit()
     return result
+
+
+async def _gupy_details(sm: SM, subdomain: str, raws: list[nz.RawJob]) -> None:
+    """Só abre a página das vagas que ainda não têm data ou descrição no banco."""
+    async with sm() as s:
+        complete = set(
+            (
+                await s.scalars(
+                    select(JobSource.external_id)
+                    .join(Job, Job.id == JobSource.job_id)
+                    .where(
+                        JobSource.source == "gupy",
+                        JobSource.external_id.in_([r.external_id for r in raws]),
+                        Job.posted_at.is_not(None),
+                        func.length(Job.description_text) >= 50,
+                    )
+                )
+            ).all()
+        )
+    await job_sources.gupy_enrich(subdomain, [r for r in raws if r.external_id not in complete])
+
+
+async def backfill_posted_at(sm: SM) -> int:
+    """Vagas sem data: procura no texto do anúncio, relativo a quando a vaga foi capturada."""
+    async with sm() as s:
+        jobs = (await s.scalars(select(Job).where(Job.posted_at.is_(None)))).all()
+        n = 0
+        for job in jobs:
+            if dt := nz.find_posted_at(f"{job.title}\n{job.description_text}", job.first_seen_at):
+                job.posted_at, n = dt, n + 1
+        await s.commit()
+    return n
+
+
+async def discover_monitored(sm: SM, task_run_id: str | None) -> dict[str, Any]:
+    """Botão "Buscar vagas": coleta agora todas as empresas monitoradas (RF-VAG-01)."""
+    async with sm() as s:
+        if not await settings_store.flag(s, "job_sources"):
+            raise ValueError("a coleta de vagas está desligada em Configurações")
+        rows = (
+            await s.execute(
+                select(Company.id, Company.name)
+                .where(Company.is_monitored.is_(True), Company.ats_board_token.is_not(None), Company.is_blocked.is_(False))
+                .order_by(Company.name)
+            )
+        ).all()
+    total, done = len(rows), 0
+    created = fetched = 0
+    errors: list[str] = []
+    sem = asyncio.Semaphore(4)
+
+    async def one(cid: uuid.UUID, name: str) -> None:
+        nonlocal done, created, fetched
+        async with sem:
+            try:
+                r = await poll_company(sm, str(cid))
+                created += int(r.get("created", 0))
+                fetched += int(r.get("fetched", 0))
+            except Exception as exc:  # uma empresa fora do ar não derruba a busca
+                log.warning("coleta de %s falhou: %s", name, exc)
+                errors.append(name)
+            done += 1
+            await progress(
+                sm, task_run_id, 5 + int(90 * done / max(total, 1)), f"{done}/{total} empresas · {created} vagas novas"
+            )
+
+    await progress(sm, task_run_id, 5, f"buscando em {total} empresas")
+    await asyncio.gather(*(one(cid, name) for cid, name in rows))
+    dated = await backfill_posted_at(sm)
+    return {"companies": total, "created": created, "fetched": fetched, "errors": errors, "dated": dated}
+
+
+celery_app.task(name="ingest.discover_monitored")(tracked("ingest.discover_monitored")(discover_monitored))
 
 
 @celery_app.task(name="ingest.poll_company")

@@ -40,6 +40,7 @@ class FormField(BaseModel):
     required: bool = False
     current_value: str | None = None
     error: str | None = None
+    max_length: int | None = Field(default=None, ge=1, le=100000)  # limite de caracteres do site, quando existe
 
 
 class FieldAnswer(BaseModel):
@@ -110,12 +111,177 @@ PROFILE_PATTERNS: list[tuple[str, str]] = [
     (r"e-?mail", "email"),
     (r"country code|codigo do pais|ddi", "country_code"),
     (r"phone|telefone|celular|mobile|whatsapp", "phone"),
-    (r"^(city|cidade|location|localizacao|localidade)\b|current location|onde voce mora", "city"),
+    # "cidade/estado", "where do you live", "current location": cidade + UF (não só a cidade)
+    (
+        r"cidade\s*/\s*estado|city\s*/\s*state|\breside\b|where do you (currently )?live|onde (voce )?mora|"
+        r"current location|localizacao atual|^(location|localizacao|localidade)\b",
+        "location",
+    ),
+    (r"^(city|cidade)\b", "city"),
     (r"linkedin", "linkedin"),
     (r"github", "github"),
     (r"portfolio|website|site pessoal|personal site", "portfolio"),
     (r"headline|titulo profissional", "headline"),
 ]
+
+
+def location_text(location: str | None, language: str | None) -> str | None:
+    """ "Brasília, DF, Brazil" → "Brasília, Brasil" (vaga BR) ou "Brasília, Brazil" (vaga em inglês)."""
+    parts = [p.strip() for p in (location or "").split(",") if p.strip()]
+    if not parts:
+        return None
+    city, country = parts[0], parts[-1] if len(parts) > 1 else None
+    if country and normalize_text(country) in ("brazil", "brasil", "br"):
+        country = "Brazil" if language == "en" else "Brasil"
+    return f"{city}, {country}" if country else city
+
+
+# perguntas sobre o seu emprego atual (vêm de Ofertas → remuneração atual, não da IA)
+CURRENT_COMPANY_RE = re.compile(
+    r"current (company|employer)|empresa atual|empregador atual|nome da empresa (em que|onde)|"
+    r"empresa (em|na) que (voce )?trabalha|company where you (currently )?work",
+)
+CURRENT_SALARY_RE = re.compile(
+    r"(current|last|present|actual)\b.{0,25}(salary|compensation|pay)|"
+    r"(salario|remuneracao)\s+(atual|ultim[oa]|de hoje)|(atual|ultim[oa])\s+(salario|remuneracao)",
+)
+# consentimento para o processo seletivo (obrigatório para se candidatar) x opt-in de marketing (fica com você)
+CONSENT_RE = re.compile(
+    r"(concordo|autorizo|aceito|consinto|i agree|i consent|i accept|i acknowledge).{0,160}"
+    r"(dados pessoais|personal (data|information)|privacidade|privacy|lgpd|gdpr|recrutamento|recruitment|selecao)"
+)
+MARKETING_RE = re.compile(
+    r"novas oportunidades|future (opportunities|openings|roles)|newsletter|marketing|midias sociais|"
+    r"comunicac|send me|enviar informac|talent (pool|community)|banco de talentos"
+)
+
+
+# autodeclaração: a pergunta → (campo das preferências, opções equivalentes por valor declarado)
+ORIENTATION_RE = re.compile(r"orientacao sexual|sexual orientation")
+LGBT_RE = re.compile(r"lgbt")
+GENDER_RE = re.compile(r"identidade de genero|\bgenero\b|\bgender\b|^sexo\b")
+RACE_RE = re.compile(r"\b(cor|raca|etnia|race|ethnicity|ethnic|racial)\b")
+SELF_ID_SYNONYMS: dict[str, list[str]] = {
+    "homem cisgenero": ["Homem cisgênero", "Homem cis", "Homem (cisgênero)", "Homem cisgênero (cis)", "Masculino",
+                        "Cisgender man", "Cis man", "Man (cisgender)", "Male", "Homem", "Man"],
+    "mulher cisgenero": ["Mulher cisgênero", "Mulher cis", "Feminino", "Cisgender woman", "Cis woman", "Female",
+                         "Mulher", "Woman"],
+    "bissexual": ["Bissexual", "Bisexual"],
+    "parda": ["Parda", "Pardo", "Pardo(a)", "Parda(o)", "Pardo/Parda", "Parda/Pardo", "Pardos", "Mixed", "Mixed race",
+              "Brown", "Multiracial", "Two or more races"],
+}  # fmt: skip
+SELF_ID_EN = {
+    "homem cisgenero": "Cisgender man",
+    "mulher cisgenero": "Cisgender woman",
+    "bissexual": "Bisexual",
+    "parda": "Mixed (Pardo)",
+}
+
+
+EXACT_ONLY = {"homem", "man", "mulher", "woman", "male", "female", "masculino", "feminino"}
+
+
+def choose_exact(options: list[str], wanted: list[str]) -> str | None:
+    """Só aceita opção igual (ou que começa pela resposta, ex.: "Sim, faço parte"). Nada de "parecido"."""
+    norm = [(normalize_text(o), o) for o in options]
+    for w in wanted:
+        nw = normalize_text(w)
+        for no, o in norm:
+            if no == nw:
+                return o
+    for w in wanted:
+        nw = normalize_text(w)
+        if nw in EXACT_ONLY:
+            continue  # "Homem" não pode virar "Homem transgênero"
+        hits = [o for no, o in norm if re.match(rf"{re.escape(nw)}(\W|$)", no)]
+        if len(hits) == 1:
+            return hits[0]
+    return None
+
+
+AFFIRMATIVE_OPT_IN_RE = re.compile(
+    r"(comfortable|confortavel|deseja|would you like|gostaria).{0,40}(answer|respond|responder)|"
+    r"(affirmative|afirmativ|diversidade|diversity).{0,200}(comfortable|confortavel|deseja|responder|answer)"
+)
+DISABILITY_RE = re.compile(r"deficien|disabilit|\bpcd\b|\bpwd\b")
+DISABILITY_DETAIL_RE = re.compile(r"\b(tipo|type|qual|which|what kind|descreva|describe|laudo|cid)\b")
+
+
+def self_id_value(f: FormField, label_n: str, prefs: PreferenceData, language: str | None) -> Any | None:
+    """Resposta da autodeclaração para esta pergunta, ou None (não é pergunta disso / não declarado / sem opção exata)."""
+    declared_any = any(
+        v not in (None, "")
+        for v in (prefs.gender_identity, prefs.sexual_orientation, prefs.race, prefs.lgbtqia, prefs.disability)
+    )
+    if AFFIRMATIVE_OPT_IN_RE.search(label_n) and not GENDER_RE.search(label_n) and not RACE_RE.search(label_n):
+        declared: str | bool | None = True if declared_any else None  # "quer responder às perguntas abaixo?"
+    elif DISABILITY_RE.search(label_n):
+        if DISABILITY_DETAIL_RE.search(label_n):
+            return None  # tipo/laudo da deficiência: só você responde
+        declared = prefs.disability
+    elif ORIENTATION_RE.search(label_n):
+        declared = prefs.sexual_orientation
+    elif LGBT_RE.search(label_n):
+        declared = prefs.lgbtqia
+    elif GENDER_RE.search(label_n):
+        declared = prefs.gender_identity
+    elif RACE_RE.search(label_n):
+        declared = prefs.race
+    else:
+        return None
+    if declared is None or declared == "":
+        return None
+    if isinstance(declared, bool):
+        wanted = ["Sim", "Yes"] if declared else ["Não", "No"]
+        text = ("Yes" if declared else "No") if language == "en" else ("Sim" if declared else "Não")
+    else:
+        key = normalize_text(declared)
+        wanted = [declared, *SELF_ID_SYNONYMS.get(key, [])]
+        text = SELF_ID_EN.get(key, declared) if language == "en" else declared
+    if f.kind in ("select", "radio", "typeahead"):
+        return choose_exact(f.options, wanted) if f.options else None
+    if f.kind == "checkbox":
+        return [o] if f.options and (o := choose_exact(f.options, wanted)) else None
+    return text
+
+
+LANG_NAMES = {
+    "spanish": "spanish", "espanhol": "spanish", "french": "french", "frances": "french", "german": "german",
+    "alemao": "german", "italian": "italian", "italiano": "italian", "mandarin": "chinese", "chines": "chinese",
+}  # fmt: skip
+NO_LANGUAGE_RE = re.compile(r"(don.?t|do not|nao) (speak|falo)|\bnone\b|\bnenhum|no knowledge|sem conhecimento|not applicable")
+
+
+def unknown_language_option(f: FormField, label_n: str, master: MasterProfile) -> str | None:
+    """Pergunta de nível num idioma que não está no seu perfil: escolhe "não falo" se o formulário tiver."""
+    asked = next((v for k, v in LANG_NAMES.items() if re.search(rf"\b{k}\b", label_n)), None)
+    if asked is None:
+        return None
+    known = {LANG_NAMES.get(normalize_text(lang.name), normalize_text(lang.name)) for lang in master.languages}
+    if asked in known:
+        return None
+    hits = [o for o in f.options if NO_LANGUAGE_RE.search(normalize_text(o))]
+    return hits[0] if len(hits) == 1 else None
+
+
+def current_salary_text(comp: dict[str, Any]) -> str | None:
+    """Remuneração atual em uma linha, do cadastro em Ofertas. Sem cadastro, fica para você."""
+    gross = float(comp.get("monthly_gross") or 0)
+    if gross <= 0:
+        return None
+
+    def brl(v: float) -> str:
+        return f"R$ {v:,.0f}".replace(",", ".")
+
+    parts = [f"{comp.get('regime') or 'CLT'} {brl(gross)} bruto/mês"]
+    if comp.get("meal_monthly"):
+        parts.append(f"VR/VA {brl(float(comp['meal_monthly']))}/mês")
+    if comp.get("plr_salaries"):
+        parts.append(f"PLR ~{str(comp['plr_salaries']).replace('.', ',')} salário(s)/ano")
+    bens = [b for b in comp.get("non_monetary") or [] if re.search(r"sa[uú]de|odonto|previd|wellhub|gympass|seguro", b, re.I)]
+    if bens:
+        parts.append(", ".join(bens[:5]))
+    return " + ".join(parts)
 
 
 def profile_value(kind: str, master: MasterProfile) -> str | None:
@@ -156,7 +322,9 @@ BR_AUTH_RE = re.compile(
     re.I,
 )
 COVER_RE = re.compile(
-    r"(cover letter|carta de apresenta|why (do you want|are you interested)|por que (voc[eê] )?(quer|deseja|se interessa))",
+    r"(cover letter|carta de apresenta|why (do you want|are you interested)|por que (voc[eê] )?(quer|deseja|se interessa)|"
+    r"(fale|conte|escreva)( um pouco)? sobre (voc[eê]|sua trajet[oó]ria)|saber mais sobre voc[eê]|apresente-se|"
+    r"tell us (a bit |more )?about yourself|introduce yourself)",
     re.I,
 )
 
@@ -230,6 +398,9 @@ async def _rules(
     return None
 
 
+OVERRIDE_MIN_SIM = 0.95  # correção só passa na frente do perfil quando a pergunta é praticamente a mesma
+
+
 async def bank_lookup(session: AsyncSession, f: FormField, job: Job) -> tuple[AnswerBankEntry, float] | None:
     q = norm_q(f.label)
     regime = job.regime or ""
@@ -244,11 +415,18 @@ async def bank_lookup(session: AsyncSession, f: FormField, job: Job) -> tuple[An
     for e in rows:
         if cond_ok(e) and (norm_q(e.canonical_question) == q or q in {norm_q(a) for a in e.aliases or []}):
             return e, 1.0
-    if SALARY_RE.search(f.label):
+    if SALARY_RE.search(f.label) and not CURRENT_SALARY_RE.search(normalize_text(f.label)):
         # pretensão que você já respondeu antes ("Pretensão salarial" = "Qual sua expectativa salarial?"), no mesmo regime
         lab = normalize_text(f.label)
         want = "pj" if re.search(r"\bpj\b", lab) else "clt" if re.search(r"\bclt\b", lab) else (regime or "").lower()
-        cands = [e for e in rows if cond_ok(e) and SALARY_RE.search(e.canonical_question) and e.source == "user"]
+        cands = [
+            e
+            for e in rows
+            if cond_ok(e)
+            and SALARY_RE.search(e.canonical_question)
+            and not CURRENT_SALARY_RE.search(normalize_text(e.canonical_question))
+            and e.source == "user"
+        ]
 
         def reg(e: AnswerBankEntry) -> str:
             qn = normalize_text(e.canonical_question)
@@ -288,7 +466,18 @@ def _finalize(f: FormField, value: Any, prefer: list[str] | None = None) -> Any 
     if f.kind == "number":
         m = re.search(r"\d+(?:[.,]\d+)?", str(value))
         return m.group(0).replace(",", ".") if m else None
-    return str(value)
+    return fit_length(str(value), f.max_length)
+
+
+def fit_length(text: str, limit: int | None) -> str:
+    """Cabe no limite do site cortando no fim de uma frase (ou de uma palavra), nunca no meio."""
+    if not limit or len(text) <= limit:
+        return text
+    cut = text[:limit]
+    end = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "), cut.rfind(".\n"))
+    if end >= limit * 0.5:
+        return cut[: end + 1].rstrip()
+    return cut[: cut.rfind(" ")].rstrip() if " " in cut else cut
 
 
 async def deterministic(
@@ -311,6 +500,16 @@ async def deterministic(
         if v is not None:
             out.values.append(Resolved(f.key, v, "user"))
             return "resolved"
+    # resposta que você já corrigiu nesta pergunta vence perfil e regras (o assistente errou antes)
+    hit = await bank_lookup(session, f, job)
+    if hit and (hit[0].conditions or {}).get("override") and hit[1] >= OVERRIDE_MIN_SIM:
+        entry, conf = hit
+        v = _finalize(f, entry.answer.get("value"), entry.answer.get("prefer"))
+        if v is not None:
+            entry.use_count += 1
+            entry.last_used_at = datetime.now(UTC)
+            out.values.append(Resolved(f.key, v, "bank", conf, entry.id))
+            return "resolved"
     # nascimento: só do seu perfil (Perfil → Preferências); sem cadastro, fica para você
     if BIRTHPLACE_RE.search(label_n) or BIRTHDATE_RE.search(label_n):
         pv = prefs.birthplace if BIRTHPLACE_RE.search(label_n) else prefs.birth_date
@@ -319,15 +518,41 @@ async def deterministic(
             out.values.append(Resolved(f.key, v, "profile"))
             return "resolved"
         return "sensitive"
+    if f.kind in ("select", "radio") and f.options and (lang_opt := unknown_language_option(f, label_n, master)):
+        out.values.append(Resolved(f.key, lang_opt, "profile"))
+        return "resolved"
+    sid = self_id_value(f, label_n, prefs, job.language)
+    if sid is not None:
+        out.values.append(Resolved(f.key, sid, "profile"))
+        return "resolved"
+    if f.kind == "checkbox" and not f.options and CONSENT_RE.search(label_n):
+        if MARKETING_RE.search(label_n) or not f.required:
+            return "sensitive"  # opt-in de marketing / opcional: quem decide é você
+        out.values.append(Resolved(f.key, True, "rule"))
+        return "resolved"
+    if f.kind not in ("radio", "checkbox", "select") and CURRENT_COMPANY_RE.search(label_n):
+        comp = await settings_store.get(session, "current_compensation")
+        name = comp.get("company") or next((e.organization for e in master.experience if e.end is None), None)
+        if name:
+            out.values.append(Resolved(f.key, name, "profile"))
+            return "resolved"
+    if CURRENT_SALARY_RE.search(label_n):
+        # salário atual NUNCA sai da pretensão. Opcional ("se sentir confortável"): em branco ajuda na negociação
+        if f.required:
+            text = current_salary_text(await settings_store.get(session, "current_compensation"))
+            v = _finalize(f, text) if text else None
+            if v is not None:
+                out.values.append(Resolved(f.key, v, "profile"))
+                return "resolved"
+        return "sensitive"
     pkind = next((k for pat, k in PROFILE_PATTERNS if re.search(pat, label_n)), None)
     if pkind and f.kind not in ("radio", "checkbox"):
-        pv = profile_value(pkind, master)
+        pv = location_text(master.contact.location, job.language) if pkind == "location" else profile_value(pkind, master)
         if pv:
             v = _finalize(f, pv)
             if v is not None:
                 out.values.append(Resolved(f.key, v, "profile"))
                 return "resolved"
-    hit = await bank_lookup(session, f, job)
     if hit:
         entry, conf = hit
         v = _finalize(f, entry.answer.get("value"), entry.answer.get("prefer"))
@@ -379,7 +604,9 @@ async def ai_batch(session: AsyncSession, fields: list[FormField], master: Maste
     if not fields:
         return {}
     qs = "\n".join(
-        f'<question key="{f.key}" kind="{f.kind}" required="{f.required}">{f.label}'
+        f'<question key="{f.key}" kind="{f.kind}" required="{f.required}"'
+        + (f' max_chars="{f.max_length}"' if f.max_length else "")
+        + f">{f.label}"
         + (" | opções: " + " ; ".join(f"{i}={o}" for i, o in enumerate(f.options)) if f.options else "")
         + "</question>"
         for f in fields
@@ -393,7 +620,7 @@ async def ai_batch(session: AsyncSession, fields: list[FormField], master: Maste
         res = await get_ai(sessionmaker_from(session)).structured(
             AIRequest(
                 task="apply.answer",
-                system=load_prompt("apply.answer", "v3"),
+                system=load_prompt("apply.answer", "v4"),
                 context="<profile>\n" + master.model_dump_json(exclude_none=True) + "\n</profile>",
                 user=user,
                 effort="low",

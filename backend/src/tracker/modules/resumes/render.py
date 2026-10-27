@@ -70,15 +70,29 @@ def _env(template_dir: Path) -> jinja2.Environment:
     return env
 
 
+def _localize_exp(exp: dict[str, object], lang: str) -> dict[str, object]:
+    if lang == "pt" and isinstance(exp.get("location"), str):
+        exp["location"] = re.sub(r"\bBrazil\b", "Brasil", str(exp["location"]))
+    return exp
+
+
 def render_tex(content: ResumeContent, master: MasterProfile, template: str = "classic") -> str:
     tdir = TEMPLATES_DIR / template
     contact = master.contact.model_dump()
+    if content.language == "pt":
+        # CV em português: país e "remoto" em português no cabeçalho
+        contact["location"] = re.sub(r"\bBrazil\b", "Brasil", contact.get("location") or "")
+        if (contact.get("remote") or "").strip().lower() == "open to remote":
+            contact["remote"] = "aberto a remoto"
+    # ordem das experiências = ordem do mestre (vale também para CVs salvos antes desta regra)
+    rank = {e.id: i for i, e in enumerate(master.experience)}
+    exps = sorted(content.experience, key=lambda x: rank.get(x.experience_id, len(rank)))
     ctx = {
         "contact": contact,
         "headline": content.headline,
         "summary": content.summary,
         "skill_rows": [r.model_dump() for r in content.skill_rows],
-        "experience": [e.model_dump() for e in content.experience],
+        "experience": [_localize_exp(e.model_dump(), content.language) for e in exps],
         "projects": [p.model_dump() for p in content.projects],
         "education": [e.model_dump() for e in content.education],
         "certifications": [c.model_dump() for c in content.certifications],

@@ -247,3 +247,65 @@ async def test_job_filters_and_facets(client: AsyncClient, session) -> None:
     assert acme["count"] == 2 and await titles(company=[acme["id"]]) == ["Data Engineer", "ML Engineer"]
     assert facets["techs"][0] == {"value": "Python", "count": 2}
     assert facets["salary"] == {"count": 2, "min": 14000, "max": 15000}
+
+
+async def test_discover_endpoint_enqueues(client: AsyncClient, dispatched) -> None:
+    r = await client.post("/api/v1/jobs/discover")
+    assert r.status_code == 202 and "task_id" in r.json()
+    assert dispatched[-1][0] == "ingest.discover_monitored"
+
+
+async def test_discover_polls_all_monitored_and_survives_errors(session, sessionmaker, monkeypatch) -> None:
+    from tracker.integrations import job_sources
+    from tracker.modules.companies.service import get_or_create
+    from tracker.modules.jobs.tasks import discover_monitored
+
+    ok = await get_or_create(session, "Globex")
+    ok.ats_kind, ok.ats_board_token, ok.is_monitored = "greenhouse", "globex", True
+    bad = await get_or_create(session, "Initech")
+    bad.ats_kind, bad.ats_board_token, bad.is_monitored = "lever", "initech", True
+    await session.commit()
+
+    async def fake_gh(token, name, transport=None):
+        return [raw("d1")]
+
+    async def broken(token, name, transport=None):
+        raise ValueError("fora do ar")
+
+    monkeypatch.setitem(job_sources.FETCHERS, "greenhouse", fake_gh)
+    monkeypatch.setitem(job_sources.FETCHERS, "lever", broken)
+    res = await discover_monitored(sessionmaker, None)
+    assert res["companies"] == 2 and res["created"] == 1 and res["errors"] == ["Initech"]
+
+
+async def test_existing_job_gets_missing_date_and_description(session) -> None:
+    undated = RawJob(source="gupy", external_id="g1", title="Engenheiro de Dados", company_name="Acme", description_text="")
+    job, _ = await job_service.upsert_job(session, undated)
+    await session.commit()
+    assert job.posted_at is None
+    when = datetime(2026, 10, 2, 18, tzinfo=UTC)
+    full = RawJob(
+        source="gupy",
+        external_id="g1",
+        title="Engenheiro de Dados",
+        company_name="Acme",
+        description_text="Pipelines com Python, Spark e Airflow em time remoto de dados.",
+        posted_at=when,
+    )
+    job2, created = await job_service.upsert_job(session, full)
+    await session.commit()
+    assert not created and job2.id == job.id
+    assert job2.posted_at == when and "Spark" in job2.description_text
+    later = RawJob(source="gupy", external_id="g1", title="Engenheiro de Dados", company_name="Acme", posted_at=datetime.now(UTC))
+    job3, _ = await job_service.upsert_job(session, later)
+    assert job3.posted_at == when  # nunca troca uma data que já tinha
+
+
+async def test_date_from_ad_text_when_source_has_none(session) -> None:
+    job, _ = await job_service.upsert_job(
+        session,
+        RawJob(source="linkedin", external_id="li1", title="Data Engineer", company_name="Acme",
+               description_text="Acme · São Paulo · Há 2 semanas · Mais de 100 candidaturas"),
+    )  # fmt: skip
+    assert job.posted_at is not None
+    assert timedelta(days=13) < datetime.now(UTC) - job.posted_at < timedelta(days=15)

@@ -333,10 +333,20 @@ class LearnItem(BaseModel):
     language: str = "any"
     # quem deu a resposta: user (você digitou), profile/bank/rule (assistente), ai (IA). Só "user" vira aprendizado.
     source: str = Field(default="user", pattern="^(user|profile|bank|rule|ai)$")
+    # você trocou um valor que o assistente tinha preenchido: na próxima vez a sua resposta vence perfil e regras
+    corrected: bool = False
 
 
 class LearnIn(BaseModel):
     items: list[LearnItem]
+
+
+_OPTION_WORDS = {"sim", "nao", "yes", "no", "outro", "other", "prefiro nao dizer", "prefer not to say", "n/a"}
+
+
+def _looks_like_option(question: str, options: list[str]) -> bool:
+    q = profile_service.normalize_question(question)
+    return q in _OPTION_WORDS or any(q == profile_service.normalize_question(o) for o in options)
 
 
 @router.post("/learn")
@@ -348,6 +358,8 @@ async def learn(body: LearnIn, session: SessionDep, _a: Auth) -> dict[str, int]:
     for it in body.items:
         if it.value in (None, "", []) or len(it.question) < 3 or it.field_kind == "file":
             continue
+        if _looks_like_option(it.question, it.options):
+            continue  # rótulo errado (texto da opção no lugar da pergunta): aprender isso só atrapalha
         nq = profile_service.normalize_question(it.question)
         entry = by_q.get(nq)
         if entry is None:
@@ -358,11 +370,24 @@ async def learn(body: LearnIn, session: SessionDep, _a: Auth) -> dict[str, int]:
                 language=it.language,
                 source="user",
                 sensitive=profile_service.is_sensitive(it.question),
+                conditions={"override": True} if it.corrected else {},
             )
             await profile_service.upsert_answer(session, entry)
             by_q[nq] = entry
         else:
             entry.answer = {**(entry.answer or {}), "value": it.value}
+            entry.source = "user"
+            if it.corrected:
+                entry.conditions = {**(entry.conditions or {}), "override": True}
+        if it.source == "user":
+            await audit.record(
+                session,
+                actor="user",
+                action="assistant.learn",
+                entity_type="answer_bank_entry",
+                entity_id=entry.id,
+                after={"question": it.question[:200], "corrected": it.corrected},
+            )
         saved += 1
     await session.commit()
     return {"saved": saved}
@@ -500,13 +525,16 @@ async def resume_for_job(session: SessionDep, _a: Auth, job_id: uuid.UUID | None
         job = await session.get(Job, job_id)
         if job is not None:
             app = await app_service.get_for_job(session, job.id)
-            if app and app.resume_render_id:
+            # já enviada: o PDF que foi de fato enviado (registro imutável, regra 6)
+            if app and app.submitted_at and app.resume_render_id:
                 render = await session.get(ResumeRender, app.resume_render_id)
             if render is None:
-                # CV sob medida desta vaga, se você aprovou
+                # CV sob medida desta vaga, se você aprovou: vence o coringa escolhido antes
                 tv = await service.tailored_variant(session, job)
                 if tv is not None and tv.status == "approved":
                     render = await resume_service.latest_render(session, tv.id)
+            if render is None and app and app.resume_render_id:
+                render = await session.get(ResumeRender, app.resume_render_id)
             if render is None:
                 sel = await resume_service.select_for_job(session, job)
                 if sel["best_variant_id"]:

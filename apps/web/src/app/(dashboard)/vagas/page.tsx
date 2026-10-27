@@ -1,7 +1,7 @@
 "use client";
 
 import { CompanyLogo } from "@/components/brand";
-import { Briefcase, Search, SlidersHorizontal } from "lucide-react";
+import { Briefcase, RefreshCw, Search, SlidersHorizontal } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
@@ -50,7 +50,7 @@ export default function JobsPage() {
         icon={<Briefcase size={20} />}
         title="Vagas"
         description="Ordenadas por prioridade (Chance × Atratividade). Filtre por tecnologia, empresa, salário e mais."
-        actions={<span data-tour="import"><ImportButton /></span>}
+        actions={<div className="flex flex-wrap gap-2"><DiscoverButton /><span data-tour="import"><ImportButton /></span></div>}
       />
       <div data-tour="tabs" className="inline-block">
         <Tabs value={tab} onChange={setTab} items={[{ value: "vagas", label: "Vagas" }, { value: "empresas", label: "Empresas monitoradas" }, { value: "buscas", label: "Buscas salvas" }]} />
@@ -233,6 +233,38 @@ function JobsList() {
         )}
       </AnimatePresence>
     </div>
+  );
+}
+
+type DiscoverResult = { companies: number; created: number; errors: string[] };
+
+/** Busca agora as vagas de todas as empresas monitoradas (o agendador também faz isso sozinho). */
+function DiscoverButton() {
+  const task = useTask((r) => {
+    const res = r as DiscoverResult | null;
+    if (!res) return;
+    const novas = res.created === 1 ? "1 vaga nova" : `${res.created} vagas novas`;
+    toast.success(`${novas} em ${res.companies} empresas`, {
+      description: res.errors.length ? `Não respondeu: ${res.errors.slice(0, 5).join(", ")}${res.errors.length > 5 ? "…" : ""}` : undefined,
+    });
+  });
+  const send = useSend<void, { task_id: string }>("POST", "/api/v1/jobs/discover");
+  const busy = task.running || send.isPending;
+  return (
+    <Button
+      variant="outline"
+      disabled={busy}
+      title="Busca agora as vagas de todas as empresas monitoradas"
+      onClick={async () => {
+        try {
+          const r = await send.mutateAsync(undefined);
+          task.start(r.task_id);
+        } catch {} // o erro já aparece no aviso
+      }}
+    >
+      <RefreshCw size={15} className={busy ? "animate-spin" : undefined} />
+      {busy ? (task.progress?.message && task.progress.pct > 1 ? task.progress.message : "Buscando…") : "Buscar vagas"}
+    </Button>
   );
 }
 

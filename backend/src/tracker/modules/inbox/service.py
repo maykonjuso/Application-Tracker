@@ -11,7 +11,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tracker.core import settings_store
+from tracker.core import audit, settings_store
 from tracker.core.config import get_settings
 from tracker.core.tasks import dispatch_after_commit
 from tracker.integrations.claude.client import AIClient, AIRequest, load_prompt
@@ -270,6 +270,10 @@ async def process_email(session: AsyncSession, ai: AIClient, email: ParsedEmail)
             row.processed_at = datetime.now(UTC)
         return row
     candidates = await candidate_applications(session, email)
+    # nada bateu por domínio/nome: a IA escolhe entre as candidaturas recentes, mas só como proposta
+    from_recent = not candidates
+    if from_recent:
+        candidates = await recent_applications(session)
     result = await classify(ai, email, candidates, row.id)
     row.classification = result.label
     row.classification_confidence = result.confidence
@@ -278,7 +282,13 @@ async def process_email(session: AsyncSession, ai: AIClient, email: ParsedEmail)
     by_id = {str(a.id): (a, j, c) for a, j, c in candidates}
     match = by_id.get(result.application_match or "")
     # palpite pela única candidatura só com remetente autenticado (e-mail forjado não escolhe candidatura)
-    if match is None and email.authenticated and len(candidates) == 1 and result.label != "recrutador_prospeccao":
+    if (
+        match is None
+        and not from_recent
+        and email.authenticated
+        and len(candidates) == 1
+        and result.label != "recrutador_prospeccao"
+    ):
         match = candidates[0]
     row.extracted = {**row.extracted, "sender_verified": email.authenticated}
     if result.label in ("irrelevante",):
@@ -292,7 +302,7 @@ async def process_email(session: AsyncSession, ai: AIClient, email: ParsedEmail)
             {"message": f"E-mail de remetente não verificado, confira: {email.subject}", "email_id": str(row.id)},
             telegram_too=result.label in NOTIFY,
         )
-    elif match and result.confidence >= cfg["min_confidence"]:
+    elif match and not from_recent and result.confidence >= cfg["min_confidence"]:
         row.application_id = match[0].id
         row.link_status = "auto"
         await apply_outcome(session, row, result, match[0], match[1], match[2])
@@ -308,8 +318,80 @@ async def process_email(session: AsyncSession, ai: AIClient, email: ParsedEmail)
             {"message": f"E-mail precisa de revisão: {email.subject}", "email_id": str(row.id)},
             telegram_too=result.label in NOTIFY,
         )
+    if row.link_status == "ambiguous":
+        row.extracted = {**row.extracted, "suggestion": suggestion(result, match)}
     row.processed_at = datetime.now(UTC)
     return row
+
+
+# rótulos que falam de um processo seletivo seu (dá para propor associar ou criar a candidatura)
+PROCESS_LABELS = {
+    "confirmacao", "rejeicao", "convite_entrevista", "pedido_disponibilidade", "teste_tecnico",
+    "oferta", "pedido_info", "remarcacao", "cancelamento",
+}  # fmt: skip
+
+
+async def recent_applications(session: AsyncSession, limit: int = 15) -> list[tuple[Application, Job, Company]]:
+    rows = (
+        await session.execute(
+            select(Application, Job, Company)
+            .join(Job, Job.id == Application.job_id)
+            .join(Company, Company.id == Job.company_id)
+            .where(Application.status.in_(SENT | ACTIVE), Application.submitted_at.is_not(None))
+            .order_by(Application.last_activity_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    return [(a, j, c) for a, j, c in rows]
+
+
+def suggestion(result: EmailClassification, match: tuple[Application, Job, Company] | None) -> dict[str, Any] | None:
+    """O que a IA propõe para um e-mail que não foi associado sozinho. Você confirma no Inbox."""
+    if match is not None:
+        app, job, comp = match
+        return {
+            "kind": "link",
+            "application_id": str(app.id),
+            "company": comp.name,
+            "job_title": job.title,
+            "confidence": result.confidence,
+        }
+    x = result.extracted
+    if result.label in PROCESS_LABELS and x.company_name:
+        return {"kind": "create", "company": x.company_name, "job_title": x.job_title, "confidence": result.confidence}
+    return None
+
+
+async def create_application_from_email(session: AsyncSession, row: EmailMessage) -> Application:
+    """Processo feito fora do tracker (a resposta chegou no e-mail): vira candidatura enviada e o e-mail é associado."""
+    from tracker.modules.jobs import service as job_service
+    from tracker.modules.jobs.normalize import RawJob
+
+    x = row.extracted or {}
+    company = (x.get("company_name") or row.from_name or sender_domain(row.from_addr).split(".")[0] or "Empresa").strip()
+    job, _ = await job_service.upsert_job(
+        session,
+        RawJob(
+            source="email",
+            external_id=f"app:{row.gmail_id}",
+            title=(x.get("job_title") or row.subject or "Vaga (pelo e-mail)")[:300],
+            company_name=company,
+            description_text=row.body_text or row.snippet,
+        ),
+    )
+    app = await app_service.create_for_job(session, job, channel="external", actor="user")
+    # o envio foi antes deste e-mail; a data exata não temos, a do e-mail é o limite superior
+    await app_service.register_submission(session, app, actor="user", channel="external", submitted_at=row.received_at)
+    await audit.record(
+        session,
+        actor="user",
+        action="inbox.create_application",
+        entity_type="email_message",
+        entity_id=row.id,
+        after={"application_id": str(app.id), "company": company},
+    )
+    await relink(session, row, app)
+    return app
 
 
 async def apply_outcome(
